@@ -1,0 +1,8 @@
+{
+    "go.lintTool": "golangci-lint",
+    "go.lintFlags": ["--fast"],
+
+    "files.readonlyInclude": {
+        "internal/mocks/*.go": true
+    }
+}

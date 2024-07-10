@@ -1,0 +1,9 @@
+# logs
+logs
+*.log
+
+# coverage
+coverage
+
+# build output
+bin

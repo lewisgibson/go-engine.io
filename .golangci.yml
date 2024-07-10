@@ -1,0 +1,12 @@
+run:
+    go: '1.22'
+    timeout: 5m
+    allow-parallel-runners: true
+
+linters:
+    presets:
+        - test
+        - unused
+
+    disable:
+        - exhaustruct
