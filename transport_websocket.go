@@ -14,7 +14,7 @@ type WebSocketTransport struct {
 	// url is the URL of the transport.
 	url *url.URL
 	// client is the http.Client to use for the transport.
-	client TransportClient
+	client *http.Client
 	// header is the header to use for the transport.
 	header http.Header
 	// state is the state of the transport.
@@ -31,10 +31,16 @@ type WebSocketTransport struct {
 	ws *websocket.Conn
 }
 
-func NewWebSocketTransport(url *url.URL, opts TransportOptions) Transport {
-	var client TransportClient = http.DefaultClient
+func NewWebSocketTransport(url *url.URL, opts TransportOptions) (Transport, error) {
+	if url == nil {
+		return nil, ErrURLRequired
+	}
+
+	var client = http.DefaultClient
 	if opts.Client != nil {
-		client = opts.Client
+		client.Transport = &TransportRoundTripper{
+			Client: opts.Client,
+		}
 	}
 
 	var header = http.Header{}
@@ -47,7 +53,7 @@ func NewWebSocketTransport(url *url.URL, opts TransportOptions) Transport {
 		client: client,
 		header: header,
 		state:  TransportStateClosed,
-	}
+	}, nil
 }
 
 // Type returns the type of the transport.
@@ -76,6 +82,7 @@ func (t *WebSocketTransport) Open(ctx context.Context) {
 
 	// Dial the websocket connection.
 	ws, res, err := websocket.Dial(ctx, t.url.String(), &websocket.DialOptions{
+		HTTPClient: t.client,
 		HTTPHeader: t.header,
 	})
 	if err != nil {
@@ -122,9 +129,16 @@ func (t *WebSocketTransport) Open(ctx context.Context) {
 
 // Close closes the transport.
 func (t *WebSocketTransport) Close(ctx context.Context) {
-	if t.state == TransportStateOpening || t.state == TransportStateOpen || t.state == TransportStateClosing {
-		t.Send(ctx, []Packet{{Type: PacketClose}})
+	switch t.state {
+	// These states are valid states to close the transport.
+	case TransportStateOpening, TransportStateOpen, TransportStateClosing:
+		break
+
+	default:
+		return
 	}
+
+	t.Send(ctx, []Packet{{Type: PacketClose}})
 }
 
 // Pause pauses the transport. It is a no-op for the WebSocket transport.
@@ -134,7 +148,12 @@ func (t *WebSocketTransport) Pause(ctx context.Context) {
 
 // Send sends packets to the transport.
 func (t *WebSocketTransport) Send(ctx context.Context, packets []Packet) error {
-	if t.state != TransportStateOpen && t.state != TransportStateClosing {
+	switch t.state {
+	// These states are valid states to send packets.
+	case TransportStateOpen, TransportStateClosing:
+		break
+
+	default:
 		return nil
 	}
 
@@ -166,17 +185,15 @@ func (t *WebSocketTransport) read(ctx context.Context) {
 		return
 	}
 
-	// Call the onPacketHandler if it is set...
-	if t.onPacketHandler != nil {
-		// ...for each packet.
-		for _, packet := range packets {
-			switch {
-			// If the packet is a close packet, call the onClose method.
-			case packet.Type == PacketClose:
-				t.onClose(ctx)
-				continue
-			}
+	for _, packet := range packets {
+		switch {
+		// If the packet is a close packet, call the onClose method.
+		case packet.Type == PacketClose:
+			t.onClose(ctx)
+		}
 
+		// Call the onPacketHandler if it is set...
+		if t.onPacketHandler != nil {
 			t.onPacketHandler(ctx, packet)
 		}
 	}
@@ -185,7 +202,7 @@ func (t *WebSocketTransport) read(ctx context.Context) {
 // onError calls the onError handler.
 func (t *WebSocketTransport) onError(ctx context.Context, err error) {
 	if t.onErrorHandler != nil {
-		go t.onErrorHandler(ctx, err)
+		t.onErrorHandler(ctx, err)
 	}
 }
 
@@ -195,7 +212,7 @@ func (t *WebSocketTransport) onClose(ctx context.Context) {
 
 	// Call the onCloseHandler if it is set.
 	if t.onCloseHandler != nil {
-		go t.onCloseHandler(ctx)
+		t.onCloseHandler(ctx)
 	}
 }
 
