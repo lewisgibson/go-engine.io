@@ -12,9 +12,8 @@ import (
 	"time"
 )
 
-var (
-	ErrInvalidURI = errors.New("invalid URI")
-)
+// ErrInvalidURL is an error that is returned when a URI is invalid.
+var ErrInvalidURL = errors.New("invalid URL")
 
 // SocketState represents the state of a socket.
 type SocketState string
@@ -70,28 +69,21 @@ type SocketOptions struct {
 
 // Socket is a struct that represents a socket connection.
 type Socket struct {
-	// url is the
+	// url is the target to connect to.
 	url *url.URL
 	// client is the http.Client to use for the transport.
 	client *http.Client
 	// header is the headers to use for the transport.
 	header http.Header
-	// state is the state of the socket.
-	state SocketState
-	// sessionID is a unique session identifier.
-	sessionID string
 	// upgrade determines whether the client should try to upgrade the transport from long-polling to something better.
 	upgrade bool
-	// tryAllTransports determines whether the client should try all transports in the list before giving up.
-	tryAllTransports bool
 	// rememberUpgrade determines whether the client should remember to upgrade to a better transport from the previous connection upgrade.
 	rememberUpgrade bool
-	// priorUpgradeSuccess determines whether the prior upgrade was successful.
-	priorUpgradeSuccess bool
-	// transport is the transport for the socket.
-	transport Transport
 	// transports is a list of transports to try (in order).
 	transports []TransportType
+	// tryAllTransports determines whether the client should try all transports in the list before giving up.
+	tryAllTransports bool
+
 	// onOpenHandler is the handler for when the socket opens.
 	onOpenHandler SocketOpenHandler
 	// onCloseHandler is the handler for when the socket closes.
@@ -102,6 +94,9 @@ type Socket struct {
 	onMessageHandler SocketMessageHandler
 	// onErrorHandler is the handler for when the socket encounters an error.
 	onErrorHandler SocketErrorHandler
+
+	// sessionID is a unique session identifier.
+	sessionID string
 	// The ping interval, used in the heartbeat mechanism (in milliseconds).
 	// https://github.com/socketio/engine.io-protocol?tab=readme-ov-file#heartbeat
 	pingInterval time.Duration
@@ -111,15 +106,22 @@ type Socket struct {
 	// The maximum number of bytes per chunk, used by the client to aggregate packets into payloads.
 	// https://github.com/socketio/engine.io-protocol?tab=readme-ov-file#packet-encoding
 	maxPayload int
+
+	// state is the state of the socket.
+	state SocketState
+	// transport is the transport for the socket.
+	transport Transport
+	// priorUpgradeSuccess determines whether the prior upgrade was successful.
+	priorUpgradeSuccess bool
 	// pingTimeoutTimer is a timer that closes the transport if the server does not respond to pings.
 	pingTimeoutTimer *time.Timer
 }
 
 // NewSocket creates a new Socket.
-func NewSocket(uri string, socketOptions ...SocketOptions) (*Socket, error) {
-	u, err := url.Parse(uri)
+func NewSocket(serverURL string, socketOptions ...SocketOptions) (*Socket, error) {
+	url, err := url.Parse(serverURL)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidURI, err)
+		return nil, fmt.Errorf("%w: %v", ErrInvalidURL, err)
 	}
 
 	var client = &http.Client{}
@@ -156,17 +158,15 @@ func NewSocket(uri string, socketOptions ...SocketOptions) (*Socket, error) {
 	}
 
 	return &Socket{
-		url: u,
-
-		state: SocketStateClosed,
-
+		url:              url,
 		client:           client,
 		header:           header,
 		upgrade:          upgrade,
 		rememberUpgrade:  rememberUpgrade,
+		transports:       transports,
 		tryAllTransports: tryAllTransports,
 
-		transports: transports,
+		state: SocketStateClosed,
 	}, nil
 }
 
@@ -197,24 +197,38 @@ func (s *Socket) OnError(handler SocketErrorHandler) {
 
 // Open opens the socket.
 func (s *Socket) Open(ctx context.Context) {
-	s.transport = s.createTransport()
+	// The socket must be closed to begin opening.
+	if s.state != SocketStateClosed {
+		return
+	}
+
+	// Create a new transport.
+	var err error
+	s.transport, err = s.createTransport()
+	if err != nil {
+		// It may not be possible to create a transport if no transports are available.
+		if s.onErrorHandler != nil {
+			s.onErrorHandler(errors.New("no transports available"))
+		}
+		return
+	}
+
+	// Bind the transport handlers.
 	s.transport.OnPacket(s.onPacket)
 	s.transport.OnError(s.onError)
 	s.transport.OnClose(func(ctx context.Context) {
 		s.onClose(ctx, "transport closed", nil)
 	})
 
+	// Open the transport.
 	s.state = SocketStateOpening
 	s.transport.Open(ctx)
 }
 
 // createTransport creates a new transport.
-func (s *Socket) createTransport() Transport {
+func (s *Socket) createTransport() (Transport, error) {
 	if len(s.transports) == 0 {
-		if s.onErrorHandler != nil {
-			s.onErrorHandler(errors.New("no transports available"))
-		}
-		return nil
+		return nil, errors.New("no transports available")
 	}
 
 	var transportType TransportType
@@ -231,7 +245,7 @@ func (s *Socket) createTransport() Transport {
 	// Resolve the URL for the transport.
 	url, err := s.resolveURL(transportType)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("resolve URL: %w", err)
 	}
 
 	// Create a new transport.
@@ -246,7 +260,7 @@ func (s *Socket) resolveURL(transportType TransportType) (*url.URL, error) {
 	// Make a copy of the URL to avoid modifying the original URL.
 	u, err := url.Parse(s.url.String())
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidURI, err)
+		return nil, fmt.Errorf("%w: %v", ErrInvalidURL, err)
 	}
 
 	// Set query parameters.
@@ -271,6 +285,7 @@ func (s *Socket) Close(ctx context.Context) {
 	default:
 		return
 	}
+
 	s.state = SocketStateClosing
 	s.transport.Close(ctx)
 }
@@ -285,6 +300,11 @@ func (s *Socket) Send(ctx context.Context, packets []Packet) error {
 	default:
 		return nil
 	}
+
+	// TODO: Enforce the maximum payload size.
+	// Loop over the packets building up the largest payload possible until s.maxPayload is reached.
+	// If more packets exist, begin adding those to the next payload. Continue until all packets are sent.
+
 	return s.transport.Send(ctx, packets)
 }
 
@@ -365,11 +385,6 @@ func (s *Socket) onPacket(ctx context.Context, p Packet) {
 		return
 	}
 
-	// If the onPacketHandler is set, call it.
-	if s.onPacketHandler != nil {
-		s.onPacketHandler(p)
-	}
-
 	s.reschedulePingTimeout(ctx)
 
 	switch p.Type {
@@ -397,6 +412,11 @@ func (s *Socket) onPacket(ctx context.Context, p Packet) {
 		if s.onMessageHandler != nil {
 			s.onMessageHandler(p.Data)
 		}
+	}
+
+	// If the onPacketHandler is set, call it.
+	if s.onPacketHandler != nil {
+		s.onPacketHandler(p)
 	}
 }
 
@@ -454,11 +474,6 @@ func (s *Socket) onOpen(ctx context.Context, p OpenPacket) {
 	// If the transport is a WebSocket, remember that the upgrade was successful.
 	s.priorUpgradeSuccess = s.transport.Type() == TransportTypeWebSocket
 
-	// If the onOpenHandler is set, call it.
-	if s.onOpenHandler != nil {
-		s.onOpenHandler()
-	}
-
 	// If the client supports upgrades, probe the server for upgrades.
 	if s.upgrade && len(p.Upgrades) != 0 {
 		for _, upgrade := range p.Upgrades {
@@ -468,7 +483,7 @@ func (s *Socket) onOpen(ctx context.Context, p OpenPacket) {
 				if err := s.probe(ctx, upgrade); err != nil {
 					// If an error handler is set, call it.
 					if s.onErrorHandler != nil {
-						go s.onErrorHandler(fmt.Errorf("failed to probe for upgrade: %w", err))
+						s.onErrorHandler(fmt.Errorf("failed to probe for upgrade: %w", err))
 					}
 					// If an error occurred, the next upgrade should be attempted.
 					continue
@@ -478,6 +493,11 @@ func (s *Socket) onOpen(ctx context.Context, p OpenPacket) {
 				break
 			}
 		}
+	}
+
+	// If the onOpenHandler is set, call it.
+	if s.onOpenHandler != nil {
+		s.onOpenHandler()
 	}
 }
 
@@ -493,12 +513,12 @@ func (s *Socket) probe(ctx context.Context, upgradeTransportType TransportType) 
 	}
 
 	// Create a transport using the upgrade transport type.
-	transport := Transports[upgradeTransportType](url, TransportOptions{
+	transport, err := Transports[upgradeTransportType](url, TransportOptions{
 		Client: s.client,
 		Header: s.header,
 	})
-	if transport == nil {
-		return nil
+	if err != nil {
+		return fmt.Errorf("failed to create transport: %w", err)
 	}
 
 	// errChan is a channel that is used to signal when the upgrade process is complete.
