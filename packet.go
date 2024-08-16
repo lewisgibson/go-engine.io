@@ -1,9 +1,16 @@
 package engineio
 
+import "fmt"
+
 // Packet represents a packet.
 type Packet struct {
 	Type PacketType
 	Data []byte
+}
+
+// String implements the Stringer interface.
+func (p Packet) String() string {
+	return fmt.Sprintf("Packet{Type: %s, Data: %s}", p.Type, p.Data)
 }
 
 // PacketType is the type of the packet.
@@ -79,22 +86,22 @@ func PacketTypeFromInt(u uint8) PacketType {
 //
 // https://github.com/socketio/engine.io-protocol?tab=readme-ov-file#handshake
 type OpenPacket struct {
-	// The session ID.
+	// A unique identifier for this connection.
 	SessionID string `json:"sid"`
 
-	// The list of available transport upgrades.
+	// A list of transport upgrades that the server supports.
 	// https://github.com/socketio/engine.io-protocol?tab=readme-ov-file#upgrade
 	Upgrades []TransportType `json:"upgrades"`
 
-	// The ping interval, used in the heartbeat mechanism (in milliseconds).
+	// How frequently the client should send a ping to the server, in milliseconds.
 	// https://github.com/socketio/engine.io-protocol?tab=readme-ov-file#heartbeat
 	PingInterval int `json:"pingInterval"`
 
-	// The ping timeout, used in the heartbeat mechanism (in milliseconds).
+	// How long to wait for a ping response before considering the connection closed, in milliseconds.
 	// https://github.com/socketio/engine.io-protocol?tab=readme-ov-file#heartbeat
 	PingTimeout int `json:"pingTimeout"`
 
-	// The maximum number of bytes per chunk, used by the client to aggregate packets into payloads.
+	// The maximum number of bytes per chunk, used to aggregate packets into payloads.
 	// https://github.com/socketio/engine.io-protocol?tab=readme-ov-file#packet-encoding
 	MaxPayload int `json:"maxPayload"`
 }
