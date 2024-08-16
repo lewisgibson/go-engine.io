@@ -2,6 +2,7 @@ package engineio
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 )
@@ -51,6 +52,11 @@ type Transport interface {
 // TransportType represents the type of a transport.
 type TransportType string
 
+// String implements the Stringer interface.
+func (t TransportType) String() string {
+	return string(t)
+}
+
 const (
 	// TransportTypePolling represents a polling transport.
 	TransportTypePolling TransportType = "polling"
@@ -60,6 +66,11 @@ const (
 
 // TransportState represents the state of a transport.
 type TransportState string
+
+// String implements the Stringer interface.
+func (s TransportState) String() string {
+	return string(s)
+}
 
 const (
 	// TransportStateOpening represents a transport that is opening.
@@ -83,14 +94,35 @@ type TransportClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+// TransportRoundTripper is a struct that implements the http.RoundTripper interface based on a TransportClient.
+type TransportRoundTripper struct {
+	Client TransportClient
+}
+
+// ErrTransportRoundTripperClientRequired is returned when a nil client is provided to the transport round tripper.
+var ErrTransportRoundTripperClientRequired = errors.New("transport round tripper client is required")
+
+// RoundTrip executes a request and returns a response.
+func (t *TransportRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.Client == nil {
+		return nil, ErrTransportRoundTripperClientRequired
+	}
+	return t.Client.Do(req)
+}
+
 // TransportOptions represents options for a transport.
 type TransportOptions struct {
+	// Client is the HTTP client used by the transport.
 	Client TransportClient
+	// Header contains the headers to be sent by the transport.
 	Header http.Header
 }
 
 // TransportConstructor is a function that creates a new transport.
-type TransportConstructor func(url *url.URL, opts TransportOptions) Transport
+type TransportConstructor func(url *url.URL, opts TransportOptions) (Transport, error)
+
+// ErrURLRequired is returned when a URL is required.
+var ErrURLRequired = errors.New("url is required")
 
 // Transports is a map of transport types to transport constructors.
 var Transports = map[TransportType]TransportConstructor{
