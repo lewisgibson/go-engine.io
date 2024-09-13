@@ -1,5 +1,3 @@
-SHA ?= $(shell git rev-parse HEAD)
-
 CPUS ?= $(shell (nproc --all || sysctl -n hw.ncpu) 2>/dev/null || echo 1)
 MAKEFLAGS += --jobs=$(CPUS)
 
@@ -18,7 +16,7 @@ build: ## Build the application
 
 .PHONY: test
 test: ## Run tests
-	@go test ./...
+	@go test $(shell go list ./... | grep -Ev 'examples|internal/mocks')
 
 .PHONY: lint
 lint: ## Lint files
@@ -30,7 +28,7 @@ coverage: coverage-html coverage-xml ## Generate and report coverage
 .PHONY: coverage-profile
 coverage-profile:
 	@mkdir -p coverage
-	@go test -cover -covermode=count -coverprofile=coverage/profile.cov ./...
+	@go test -cover -covermode=count -coverprofile=coverage/profile.cov $(shell go list ./... | grep -Ev 'examples|internal/mocks')
 
 .PHONY: coverage-html
 coverage-html: coverage-profile
