@@ -246,11 +246,10 @@ func TestPollingTransport_Open_CallsOnOpenHandler(t *testing.T) {
 			require.NoError(t, err)
 
 			// Arrange: encode the open packet.
-			packet, err := engineio.EncodePacket(engineio.Packet{
+			packet := engineio.EncodePacket(engineio.Packet{
 				Type: engineio.PacketOpen,
 				Data: data,
 			})
-			require.NoError(t, err)
 
 			// Act: return a new response with the open packet.
 			return &http.Response{
@@ -318,11 +317,10 @@ func TestPollingTransport_CallsOnPacketHandler(t *testing.T) {
 			require.NoError(t, err)
 
 			// Arrange: encode the open packet.
-			packet, err := engineio.EncodePacket(engineio.Packet{
+			packet := engineio.EncodePacket(engineio.Packet{
 				Type: engineio.PacketOpen,
 				Data: data,
 			})
-			require.NoError(t, err)
 
 			// Act: return a new response with the open packet.
 			return &http.Response{
@@ -394,11 +392,10 @@ func TestPollingTransport_Polls(t *testing.T) {
 				require.NoError(t, err)
 
 				// Arrange: encode the open packet.
-				packet, err := engineio.EncodePacket(engineio.Packet{
+				packet := engineio.EncodePacket(engineio.Packet{
 					Type: engineio.PacketOpen,
 					Data: data,
 				})
-				require.NoError(t, err)
 
 				// Act: return a new response with the open packet.
 				opened.Store(true)
@@ -409,11 +406,10 @@ func TestPollingTransport_Polls(t *testing.T) {
 
 			case req.Method == http.MethodGet && opened.Load():
 				// Arrange: encode the message packet.
-				packet, err := engineio.EncodePacket(engineio.Packet{
+				packet := engineio.EncodePacket(engineio.Packet{
 					Type: engineio.PacketMessage,
 					Data: []byte("hello"),
 				})
-				require.NoError(t, err)
 
 				// Act: return a new response with a message packet.
 				return &http.Response{
@@ -639,6 +635,80 @@ func TestPollingTransport_Poll_CallsOnErrorHandler_WithBadStatusCode(t *testing.
 	}
 }
 
+// badReadWriteCloser is a mock io.ReadWriteCloser that returns an error when read or write is called.
+type badReadWriteCloser struct{}
+
+// Read implements the io.Reader interface.
+func (r *badReadWriteCloser) Read(p []byte) (n int, err error) {
+	return 0, errors.New("mock error")
+}
+
+// Write implements the io.Writer interface.
+func (r *badReadWriteCloser) Write(p []byte) (n int, err error) {
+	return 0, errors.New("mock error")
+}
+
+// Close implements the io.Closer interface.
+func (r *badReadWriteCloser) Close() error {
+	return nil
+}
+
+func TestPollingTransport_CallsOnErrorHandler_WithNilResponseBody(t *testing.T) {
+	t.Parallel()
+
+	// Arrange: create a new mock controller.
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	// Assert: decoding the malformed base64 string should cause an error
+	_, err := base64.StdEncoding.DecodeString("aa")
+	require.Error(t, err)
+
+	// Arrange: create a new mock transport client.
+	mockTransportClient := mocks.NewMockTransportClient(ctrl)
+	mockTransportClient.EXPECT().
+		Do(gomock.Any()).
+		DoAndReturn(func(req *http.Request) (*http.Response, error) {
+			// Act: return a new response with a bad status code.
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       &badReadWriteCloser{},
+			}, nil
+		}).
+		AnyTimes()
+
+	// Arrange: parse the target url.
+	u, err := url.Parse("http://localhost/engine.io/?EIO=4&transport=polling")
+	require.NoError(t, err)
+
+	// Act: create a new polling transport with the mock transport client.
+	transport, err := engineio.NewPollingTransport(u, engineio.TransportOptions{
+		Client: mockTransportClient,
+	})
+	require.NoErrorf(t, err, "transport should not return an error")
+
+	// Arrange: create a new channel to signal when the transport receives an error.
+	onErrorChan := make(chan struct{}, 1)
+	transport.OnError(func(ctx context.Context, err error) {
+		// Assert: the error is not nil.
+		require.ErrorContainsf(t, err, "read error", "transport should return an error")
+
+		// Signal that the transport has received an error.
+		onErrorChan <- struct{}{}
+	})
+
+	// Act: open the transport.
+	transport.Open(context.Background())
+
+	// Wait for the transport to receive an error.
+	select {
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timeout waiting for transport to error")
+
+	case <-onErrorChan:
+	}
+}
+
 func TestPollingTransport_CallsOnErrorHandler_WithBadResponseBody(t *testing.T) {
 	t.Parallel()
 
@@ -722,11 +792,10 @@ func TestPollingTransport_Pause_SetsStateToPaused(t *testing.T) {
 				require.NoError(t, err)
 
 				// Arrange: encode the open packet.
-				packet, err := engineio.EncodePacket(engineio.Packet{
+				packet := engineio.EncodePacket(engineio.Packet{
 					Type: engineio.PacketOpen,
 					Data: data,
 				})
-				require.NoError(t, err)
 
 				// Act: return a new response with the open packet.
 				opened.Store(true)
@@ -737,11 +806,10 @@ func TestPollingTransport_Pause_SetsStateToPaused(t *testing.T) {
 
 			case req.Method == http.MethodGet && opened.Load():
 				// Arrange: encode the message packet.
-				packet, err := engineio.EncodePacket(engineio.Packet{
+				packet := engineio.EncodePacket(engineio.Packet{
 					Type: engineio.PacketMessage,
 					Data: []byte("hello"),
 				})
-				require.NoError(t, err)
 
 				// Act: return a new response with a message packet.
 				return &http.Response{
@@ -819,11 +887,10 @@ func TestPollingTransport_Send_WritesPacket_WithOpenState(t *testing.T) {
 				require.NoError(t, err)
 
 				// Arrange: encode the open packet.
-				packet, err := engineio.EncodePacket(engineio.Packet{
+				packet := engineio.EncodePacket(engineio.Packet{
 					Type: engineio.PacketOpen,
 					Data: data,
 				})
-				require.NoError(t, err)
 
 				// Act: return a new response with the open packet.
 				opened.Store(true)
@@ -834,11 +901,10 @@ func TestPollingTransport_Send_WritesPacket_WithOpenState(t *testing.T) {
 
 			case req.Method == http.MethodGet && opened.Load():
 				// Arrange: encode the message packet.
-				packet, err := engineio.EncodePacket(engineio.Packet{
+				packet := engineio.EncodePacket(engineio.Packet{
 					Type: engineio.PacketMessage,
 					Data: []byte("hello"),
 				})
-				require.NoError(t, err)
 
 				// Act: return a new response with a message packet.
 				return &http.Response{
@@ -1019,11 +1085,10 @@ func TestPollingTransport_Close_SendsClosePacket(t *testing.T) {
 				require.NoError(t, err)
 
 				// Arrange: encode the open packet.
-				packet, err := engineio.EncodePacket(engineio.Packet{
+				packet := engineio.EncodePacket(engineio.Packet{
 					Type: engineio.PacketOpen,
 					Data: data,
 				})
-				require.NoError(t, err)
 
 				// Act: return a new response with the open packet.
 				opened.Store(true)
@@ -1034,10 +1099,9 @@ func TestPollingTransport_Close_SendsClosePacket(t *testing.T) {
 
 			case req.Method == http.MethodGet && opened.Load() && closing.Load():
 				// Arrange: encode the close packet.
-				packet, err := engineio.EncodePacket(engineio.Packet{
+				packet := engineio.EncodePacket(engineio.Packet{
 					Type: engineio.PacketClose,
 				})
-				require.NoError(t, err)
 
 				// Act: return a new response with a close packet.
 				return &http.Response{
@@ -1047,11 +1111,10 @@ func TestPollingTransport_Close_SendsClosePacket(t *testing.T) {
 
 			case req.Method == http.MethodGet && opened.Load():
 				// Arrange: encode the message packet.
-				packet, err := engineio.EncodePacket(engineio.Packet{
+				packet := engineio.EncodePacket(engineio.Packet{
 					Type: engineio.PacketMessage,
 					Data: []byte("hello"),
 				})
-				require.NoError(t, err)
 
 				// Act: return a new response with a message packet.
 				return &http.Response{
@@ -1149,11 +1212,10 @@ func TestPollingTransport_Close_CallsOnCloseHandler(t *testing.T) {
 				require.NoError(t, err)
 
 				// Arrange: encode the open packet.
-				packet, err := engineio.EncodePacket(engineio.Packet{
+				packet := engineio.EncodePacket(engineio.Packet{
 					Type: engineio.PacketOpen,
 					Data: data,
 				})
-				require.NoError(t, err)
 
 				// Act: return a new response with the open packet.
 				opened.Store(true)
@@ -1164,10 +1226,9 @@ func TestPollingTransport_Close_CallsOnCloseHandler(t *testing.T) {
 
 			case req.Method == http.MethodGet && opened.Load() && closing.Load():
 				// Arrange: encode the close packet.
-				packet, err := engineio.EncodePacket(engineio.Packet{
+				packet := engineio.EncodePacket(engineio.Packet{
 					Type: engineio.PacketClose,
 				})
-				require.NoError(t, err)
 
 				// Act: return a new response with a close packet.
 				return &http.Response{
@@ -1177,11 +1238,10 @@ func TestPollingTransport_Close_CallsOnCloseHandler(t *testing.T) {
 
 			case req.Method == http.MethodGet && opened.Load():
 				// Arrange: encode the message packet.
-				packet, err := engineio.EncodePacket(engineio.Packet{
+				packet := engineio.EncodePacket(engineio.Packet{
 					Type: engineio.PacketMessage,
 					Data: []byte("hello"),
 				})
-				require.NoError(t, err)
 
 				// Act: return a new response with a message packet.
 				return &http.Response{
@@ -1293,11 +1353,10 @@ func TestPollingTransport_Close_CallsOnPacketHandler(t *testing.T) {
 				require.NoError(t, err)
 
 				// Arrange: encode the open packet.
-				packet, err := engineio.EncodePacket(engineio.Packet{
+				packet := engineio.EncodePacket(engineio.Packet{
 					Type: engineio.PacketOpen,
 					Data: data,
 				})
-				require.NoError(t, err)
 
 				// Act: return a new response with the open packet.
 				opened.Store(true)
@@ -1308,10 +1367,9 @@ func TestPollingTransport_Close_CallsOnPacketHandler(t *testing.T) {
 
 			case req.Method == http.MethodGet && opened.Load() && closing.Load():
 				// Arrange: encode the close packet.
-				packet, err := engineio.EncodePacket(engineio.Packet{
+				packet := engineio.EncodePacket(engineio.Packet{
 					Type: engineio.PacketClose,
 				})
-				require.NoError(t, err)
 
 				// Act: return a new response with a close packet.
 				return &http.Response{
@@ -1321,11 +1379,10 @@ func TestPollingTransport_Close_CallsOnPacketHandler(t *testing.T) {
 
 			case req.Method == http.MethodGet && opened.Load():
 				// Arrange: encode the message packet.
-				packet, err := engineio.EncodePacket(engineio.Packet{
+				packet := engineio.EncodePacket(engineio.Packet{
 					Type: engineio.PacketMessage,
 					Data: []byte("hello"),
 				})
-				require.NoError(t, err)
 
 				// Act: return a new response with a message packet.
 				return &http.Response{
