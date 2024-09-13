@@ -7,9 +7,23 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestPacket_String(t *testing.T) {
+	t.Parallel()
+
+	// Arrange: create a packet
+	packet := engineio.Packet{
+		Type: engineio.PacketMessage,
+		Data: []byte("Hello, World!"),
+	}
+
+	// Assert: the string representation of the packet is the expected string
+	assert.Equal(t, "Packet{Type: message, Data: Hello, World!}", packet.String())
+}
+
 func TestPacketType_String(t *testing.T) {
 	t.Parallel()
 
+	// Assert: the string representation of the packet type is the expected string
 	assert.Equal(t, "open", engineio.PacketOpen.String())
 	assert.Equal(t, "close", engineio.PacketClose.String())
 	assert.Equal(t, "ping", engineio.PacketPing.String())
@@ -23,6 +37,7 @@ func TestPacketType_String(t *testing.T) {
 func TestPacketType_Byte(t *testing.T) {
 	t.Parallel()
 
+	// Assert: the byte representation of the packet type is the expected byte
 	assert.Equal(t, byte('0'), engineio.PacketOpen.Byte())
 	assert.Equal(t, byte('1'), engineio.PacketClose.Byte())
 	assert.Equal(t, byte('2'), engineio.PacketPing.Byte())
@@ -35,6 +50,7 @@ func TestPacketType_Byte(t *testing.T) {
 func TestPacketTypeFromByte(t *testing.T) {
 	t.Parallel()
 
+	// Assert: the packet type from the byte is the expected packet type
 	assert.Equal(t, engineio.PacketOpen, engineio.PacketTypeFromByte(byte('0')))
 	assert.Equal(t, engineio.PacketClose, engineio.PacketTypeFromByte(byte('1')))
 	assert.Equal(t, engineio.PacketPing, engineio.PacketTypeFromByte(byte('2')))
@@ -47,6 +63,7 @@ func TestPacketTypeFromByte(t *testing.T) {
 func TestPacketTypeFromInt(t *testing.T) {
 	t.Parallel()
 
+	// Assert: the packet type from the integer is the expected packet type
 	assert.Equal(t, engineio.PacketOpen, engineio.PacketTypeFromInt(0))
 	assert.Equal(t, engineio.PacketClose, engineio.PacketTypeFromInt(1))
 	assert.Equal(t, engineio.PacketPing, engineio.PacketTypeFromInt(2))
