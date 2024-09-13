@@ -48,7 +48,7 @@ type SocketErrorHandler func(error)
 type SocketOptions struct {
 	// Client is the http.Client to use for the transport.
 	// Default: a new http.Client
-	Client *http.Client
+	Client TransportClient
 	// Header is the headers to use for the transport.
 	// Default: an empty http.Header
 	Header *http.Header
@@ -71,8 +71,8 @@ type SocketOptions struct {
 type Socket struct {
 	// url is the target to connect to.
 	url *url.URL
-	// client is the http.Client to use for the transport.
-	client *http.Client
+	// client is the TransportClient to use for the transport.
+	client TransportClient
 	// header is the headers to use for the transport.
 	header http.Header
 	// upgrade determines whether the client should try to upgrade the transport from long-polling to something better.
@@ -124,7 +124,7 @@ func NewSocket(serverURL string, socketOptions ...SocketOptions) (*Socket, error
 		return nil, fmt.Errorf("%w: %v", ErrInvalidURL, err)
 	}
 
-	var client = &http.Client{}
+	var client TransportClient = &http.Client{}
 	if len(socketOptions) != 0 && socketOptions[0].Client != nil {
 		client = socketOptions[0].Client
 	}
@@ -168,31 +168,6 @@ func NewSocket(serverURL string, socketOptions ...SocketOptions) (*Socket, error
 
 		state: SocketStateClosed,
 	}, nil
-}
-
-// OnOpen sets the handler for when the socket opens.
-func (s *Socket) OnOpen(handler SocketOpenHandler) {
-	s.onOpenHandler = handler
-}
-
-// OnClose sets the handler for when the socket closes.
-func (s *Socket) OnClose(handler SocketCloseHandler) {
-	s.onCloseHandler = handler
-}
-
-// OnPacket sets the handler for when the socket receives packets.
-func (s *Socket) OnPacket(handler SocketPacketHandler) {
-	s.onPacketHandler = handler
-}
-
-// OnMessage sets the handler for when the socket receives a message packet.
-func (s *Socket) OnMessage(handler SocketMessageHandler) {
-	s.onMessageHandler = handler
-}
-
-// OnError sets the handler for when the socket encounters an error.
-func (s *Socket) OnError(handler SocketErrorHandler) {
-	s.onErrorHandler = handler
 }
 
 // Open opens the socket.
@@ -304,7 +279,6 @@ func (s *Socket) Send(ctx context.Context, packets []Packet) error {
 	// TODO: Enforce the maximum payload size.
 	// Loop over the packets building up the largest payload possible until s.maxPayload is reached.
 	// If more packets exist, begin adding those to the next payload. Continue until all packets are sent.
-
 	return s.transport.Send(ctx, packets)
 }
 
@@ -591,4 +565,29 @@ func (s *Socket) probe(ctx context.Context, upgradeTransportType TransportType) 
 	}
 
 	return nil
+}
+
+// OnOpen sets the handler for when the socket opens.
+func (s *Socket) OnOpen(handler SocketOpenHandler) {
+	s.onOpenHandler = handler
+}
+
+// OnClose sets the handler for when the socket closes.
+func (s *Socket) OnClose(handler SocketCloseHandler) {
+	s.onCloseHandler = handler
+}
+
+// OnPacket sets the handler for when the socket receives packets.
+func (s *Socket) OnPacket(handler SocketPacketHandler) {
+	s.onPacketHandler = handler
+}
+
+// OnMessage sets the handler for when the socket receives a message packet.
+func (s *Socket) OnMessage(handler SocketMessageHandler) {
+	s.onMessageHandler = handler
+}
+
+// OnError sets the handler for when the socket encounters an error.
+func (s *Socket) OnError(handler SocketErrorHandler) {
+	s.onErrorHandler = handler
 }
