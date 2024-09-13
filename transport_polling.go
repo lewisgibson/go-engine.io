@@ -10,7 +10,7 @@ import (
 	"sync"
 )
 
-// PollingTransport is a struct that represents a polling transport.
+// PollingTransport is a transport that uses the HTTP long polling protocol.
 type PollingTransport struct {
 	// url is the URL of the transport.
 	url *url.URL
@@ -18,10 +18,7 @@ type PollingTransport struct {
 	client TransportClient
 	// header is the header to use for the transport.
 	header http.Header
-	// state is the state of the transport.
-	state TransportState
-	// polling is a wait group that completes when the in-flight poll is complete.
-	polling *sync.WaitGroup
+
 	// onOpenHandler is the handler for when the transport opens.
 	onOpenHandler TransportOpenHandler
 	// onCloseHandler is the handler for when the transport closes.
@@ -30,6 +27,11 @@ type PollingTransport struct {
 	onPacketHandler TransportPacketHandler
 	// onErrorHandler is the handler for when the transport encounters an error.
 	onErrorHandler TransportErrorHandler
+
+	// state is the state of the transport.
+	state TransportState
+	// polling is a wait group that completes when the in-flight poll is complete.
+	polling *sync.WaitGroup
 }
 
 // NewPollingTransport creates a new PollingTransport.
@@ -49,9 +51,10 @@ func NewPollingTransport(url *url.URL, opts TransportOptions) (Transport, error)
 	}
 
 	return &PollingTransport{
-		url:     url,
-		client:  client,
-		header:  header,
+		url:    url,
+		client: client,
+		header: header,
+
 		state:   TransportStateClosed,
 		polling: &sync.WaitGroup{},
 	}, nil
@@ -74,7 +77,19 @@ func (t *PollingTransport) SetURL(url *url.URL) {
 
 // Open opens the transport.
 func (t *PollingTransport) Open(ctx context.Context) {
+	switch t.state {
+	// These states are valid for opening the transport.
+	case TransportStateClosed:
+		break
+
+	default:
+		return
+	}
+
+	// Set the state to opening.
 	t.state = TransportStateOpening
+
+	// Poll to open the transport.
 	t.poll(ctx)
 }
 
@@ -110,12 +125,7 @@ func (t *PollingTransport) Send(ctx context.Context, packets []Packet) error {
 		return nil
 	}
 
-	b, err := EncodePayload(packets)
-	if err != nil {
-		return fmt.Errorf("encode error: %w", err)
-	}
-
-	return t.write(ctx, b)
+	return t.write(ctx, EncodePayload(packets))
 }
 
 // Close closes the transport.

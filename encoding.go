@@ -3,6 +3,7 @@ package engineio
 import (
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"unicode"
 )
 
@@ -13,7 +14,7 @@ var ErrEmptyPacket = errors.New("empty packet")
 const BinaryMarker = 'b'
 
 // EncodePacket encodes a packet into bytes.
-func EncodePacket(packet Packet) ([]byte, error) {
+func EncodePacket(packet Packet) []byte {
 	// binary is true if the data contains non-ASCII characters.
 	var binary bool
 	for _, r := range string(packet.Data) {
@@ -28,14 +29,14 @@ func EncodePacket(packet Packet) ([]byte, error) {
 		return append(
 			[]byte{BinaryMarker},
 			[]byte(base64.StdEncoding.EncodeToString(packet.Data))...,
-		), nil
+		)
 
 	// The packet is a text packet.
 	default:
 		return append(
 			[]byte{packet.Type.Byte()},
 			packet.Data...,
-		), nil
+		)
 	}
 }
 
@@ -50,7 +51,7 @@ func DecodePacket(input []byte) (Packet, error) {
 	case input[0] == BinaryMarker:
 		data, err := base64.StdEncoding.DecodeString(string(input[1:]))
 		if err != nil {
-			return Packet{}, err
+			return Packet{}, fmt.Errorf("decode base64: %w", err)
 		}
 		return Packet{Type: PacketMessage, Data: data}, nil
 

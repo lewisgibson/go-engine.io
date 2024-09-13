@@ -17,8 +17,7 @@ func TestEncodePayload(t *testing.T) {
 	}
 
 	// Act: encode packets
-	encoded, err := engineio.EncodePayload(packets)
-	require.NoError(t, err, "should not return an error")
+	encoded := engineio.EncodePayload(packets)
 
 	// Assert: encoded result should not be empty
 	require.NotEmpty(t, encoded, "should return non-empty result")

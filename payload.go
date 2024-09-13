@@ -10,16 +10,12 @@ import (
 const Separator = '\x1E'
 
 // EncodePayload encodes packets into bytes.
-func EncodePayload(packets []Packet) ([]byte, error) {
+func EncodePayload(packets []Packet) []byte {
 	encoded := make([][]byte, len(packets))
 	for i, packet := range packets {
-		b, err := EncodePacket(packet)
-		if err != nil {
-			return nil, err
-		}
-		encoded[i] = b
+		encoded[i] = EncodePacket(packet)
 	}
-	return bytes.Join(encoded, []byte{Separator}), nil
+	return bytes.Join(encoded, []byte{Separator})
 }
 
 // DecodePayload decodes bytes into packets.
