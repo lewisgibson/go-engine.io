@@ -6,10 +6,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"runtime"
 
 	"nhooyr.io/websocket"
 )
 
+// WebSocketTransport is a transport that uses the WebSocket protocol.
 type WebSocketTransport struct {
 	// url is the URL of the transport.
 	url *url.URL
@@ -17,8 +19,7 @@ type WebSocketTransport struct {
 	client *http.Client
 	// header is the header to use for the transport.
 	header http.Header
-	// state is the state of the transport.
-	state TransportState
+
 	// onOpenHandler is the handler for when the transport opens.
 	onOpenHandler TransportOpenHandler
 	// onCloseHandler is the handler for when the transport closes.
@@ -27,10 +28,14 @@ type WebSocketTransport struct {
 	onPacketHandler TransportPacketHandler
 	// onErrorHandler is the handler for when the transport encounters an error.
 	onErrorHandler TransportErrorHandler
+
+	// state is the state of the transport.
+	state TransportState
 	// ws is the websocket connection.
 	ws *websocket.Conn
 }
 
+// NewWebSocketTransport creates a new WebSocket transport.
 func NewWebSocketTransport(url *url.URL, opts TransportOptions) (Transport, error) {
 	if url == nil {
 		return nil, ErrURLRequired
@@ -73,7 +78,12 @@ func (t *WebSocketTransport) SetURL(url *url.URL) {
 
 // Open opens the transport.
 func (t *WebSocketTransport) Open(ctx context.Context) {
-	if t.state != TransportStateClosed {
+	switch t.state {
+	// These states are valid states to open the transport.
+	case TransportStateClosed:
+		break
+
+	default:
 		return
 	}
 
@@ -100,6 +110,9 @@ func (t *WebSocketTransport) Open(ctx context.Context) {
 	}
 	t.ws = ws
 
+	// The transport is now open.
+	t.onOpen(ctx)
+
 	// Read packets from the websocket connection.
 	go func() {
 		for {
@@ -118,27 +131,24 @@ func (t *WebSocketTransport) Open(ctx context.Context) {
 			}
 		}
 	}()
-
-	t.state = TransportStateOpen
-
-	// Call the onOpenHandler if it is set.
-	if t.onOpenHandler != nil {
-		t.onOpenHandler(ctx)
-	}
 }
 
 // Close closes the transport.
 func (t *WebSocketTransport) Close(ctx context.Context) {
 	switch t.state {
 	// These states are valid states to close the transport.
-	case TransportStateOpening, TransportStateOpen, TransportStateClosing:
+	case TransportStateOpening, TransportStateOpen:
 		break
 
 	default:
 		return
 	}
 
+	// Send a close packet to the server.
 	t.Send(ctx, []Packet{{Type: PacketClose}})
+
+	// Set the state to closing to prevent Close being called again.
+	t.state = TransportStateClosing
 }
 
 // Pause pauses the transport. It is a no-op for the WebSocket transport.
@@ -150,21 +160,18 @@ func (t *WebSocketTransport) Pause(ctx context.Context) {
 func (t *WebSocketTransport) Send(ctx context.Context, packets []Packet) error {
 	switch t.state {
 	// These states are valid states to send packets.
-	case TransportStateOpen, TransportStateClosing:
+	case TransportStateOpen:
 		break
 
 	default:
 		return nil
 	}
 
-	b, err := EncodePayload(packets)
-	if err != nil {
-		return err
-	}
-
-	return t.ws.Write(ctx, websocket.MessageText, b)
+	// Write the payload to the websocket connection.
+	return t.ws.Write(ctx, websocket.MessageText, EncodePayload(packets))
 }
 
+// read reads packets from the websocket connection.
 func (t *WebSocketTransport) read(ctx context.Context) {
 	messageType, b, err := t.ws.Read(ctx)
 	switch {
@@ -185,6 +192,7 @@ func (t *WebSocketTransport) read(ctx context.Context) {
 		return
 	}
 
+	// Handle each packet.
 	for _, packet := range packets {
 		switch {
 		// If the packet is a close packet, call the onClose method.
@@ -192,10 +200,40 @@ func (t *WebSocketTransport) read(ctx context.Context) {
 			t.onClose(ctx)
 		}
 
-		// Call the onPacketHandler if it is set...
-		if t.onPacketHandler != nil {
-			t.onPacketHandler(ctx, packet)
-		}
+		// A packet is received, call the onPacket method.
+		t.onPacket(ctx, packet)
+	}
+}
+
+// onOpen sets the state of the transport to open.
+func (t *WebSocketTransport) onOpen(ctx context.Context) {
+	t.state = TransportStateOpen
+
+	if t.onOpenHandler != nil {
+		t.onOpenHandler(ctx)
+	}
+}
+
+// onClose sets the state of the transport to closed.
+func (t *WebSocketTransport) onClose(ctx context.Context) {
+	// Set the state of the transport to closed.
+	t.state = TransportStateClosed
+
+	// The websocket connection is closed, so the finalizer is no longer needed.
+	runtime.SetFinalizer(t.ws, nil)
+
+	// Clear the reference to the websocket connection.
+	t.ws = nil
+
+	if t.onCloseHandler != nil {
+		t.onCloseHandler(ctx)
+	}
+}
+
+// onPacket calls the onPacket handler.
+func (t *WebSocketTransport) onPacket(ctx context.Context, packet Packet) {
+	if t.onPacketHandler != nil {
+		t.onPacketHandler(ctx, packet)
 	}
 }
 
@@ -203,16 +241,6 @@ func (t *WebSocketTransport) read(ctx context.Context) {
 func (t *WebSocketTransport) onError(ctx context.Context, err error) {
 	if t.onErrorHandler != nil {
 		t.onErrorHandler(ctx, err)
-	}
-}
-
-// onClose sets the state of the transport to closed.
-func (t *WebSocketTransport) onClose(ctx context.Context) {
-	t.state = TransportStateClosed
-
-	// Call the onCloseHandler if it is set.
-	if t.onCloseHandler != nil {
-		t.onCloseHandler(ctx)
 	}
 }
 
