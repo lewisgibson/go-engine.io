@@ -4,63 +4,53 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"unicode"
 )
 
-// ErrEmptyPacket is returned when the input is empty.
-var ErrEmptyPacket = errors.New("empty packet")
+// Sentinel Errors.
+var (
+	ErrEmptyPacket       = errors.New("empty packet")
+	ErrInvalidPacketType = errors.New("invalid packet type")
+)
 
-// BinaryMarker is the marker for binary packets.
+// BinaryMarker is the byte that prefixes a base64-encoded binary packet.
+//
+// https://github.com/socketio/engine.io-protocol#packet-encoding
 const BinaryMarker = 'b'
 
-// EncodePacket encodes a packet into bytes.
+// EncodePacket encodes a packet into its text wire form. A binary message is
+// base64-encoded behind the BinaryMarker; any other packet is its type byte
+// followed by its data. Binary messages sent over a transport with native
+// binary frames (WebSocket) are written as raw frames and never pass here.
 func EncodePacket(packet Packet) []byte {
-	// binary is true if the data contains non-ASCII characters.
-	var binary bool
-	for _, r := range string(packet.Data) {
-		if r > unicode.MaxASCII || !unicode.IsPrint(r) {
-			binary = true
-		}
+	if packet.IsBinary {
+		var encoded = base64.StdEncoding.EncodeToString(packet.Data)
+		return append([]byte{BinaryMarker}, encoded...)
 	}
 
-	switch {
-	// The packet is a binary packet.
-	case binary:
-		return append(
-			[]byte{BinaryMarker},
-			[]byte(base64.StdEncoding.EncodeToString(packet.Data))...,
-		)
-
-	// The packet is a text packet.
-	default:
-		return append(
-			[]byte{packet.Type.Byte()},
-			packet.Data...,
-		)
-	}
+	return append([]byte{packet.Type.Byte()}, packet.Data...)
 }
 
-// DecodePacket decodes a packet from a string.
+// DecodePacket decodes a single packet from its text wire form. A leading
+// BinaryMarker denotes a base64-encoded binary message; otherwise the first
+// byte is the packet type and the remainder is the data.
 func DecodePacket(input []byte) (Packet, error) {
 	switch {
-	// The input is empty.
 	case len(input) == 0:
 		return Packet{}, ErrEmptyPacket
 
-	// The input is a binary packet. This must be a message packet.
+	// A binary packet carries no type digit; the marker itself implies a message.
 	case input[0] == BinaryMarker:
 		data, err := base64.StdEncoding.DecodeString(string(input[1:]))
 		if err != nil {
-			return Packet{}, fmt.Errorf("decode base64: %w", err)
+			return Packet{}, fmt.Errorf("decoding base64: %w", err)
 		}
-		return Packet{Type: PacketMessage, Data: data}, nil
+		return Packet{Type: PacketMessage, Data: data, IsBinary: true}, nil
 
-	// The input is a single byte packet, this indicates no data.
-	case len(input) == 1:
-		return Packet{Type: PacketTypeFromByte(input[0]), Data: []byte{}}, nil
-
-	// The input is a packet with data.
 	default:
-		return Packet{Type: PacketTypeFromByte(input[0]), Data: input[1:]}, nil
+		var packetType = PacketTypeFromByte(input[0])
+		if !packetType.valid() {
+			return Packet{}, fmt.Errorf("%w: %q", ErrInvalidPacketType, input[0])
+		}
+		return Packet{Type: packetType, Data: input[1:]}, nil
 	}
 }
