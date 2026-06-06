@@ -1,0 +1,45 @@
+name: Fakes
+
+on:
+    workflow_dispatch: {}
+
+    push:
+        branches:
+            - main
+
+    pull_request:
+        branches:
+            - main
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+    contents: read
+
+jobs:
+    fakes:
+        name: Fakes
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v6.0.3
+
+            - name: Setup Go
+              uses: actions/setup-go@v6.4.0
+              with:
+                  go-version-file: ./go.mod
+                  cache: true
+
+            - name: Generate Fakes
+              run: make fakes
+
+            - name: Verify No Drift
+              run: |
+                  if [ -n "$(git ls-files -o --exclude-standard)" ]; then
+                      echo "::error::make fakes produced untracked files; run 'make fakes' and commit the result"
+                      git ls-files -o --exclude-standard
+                      exit 1
+                  fi
+                  git diff --exit-code

@@ -1,6 +1,8 @@
-name: test
+name: Test
 
 on:
+    workflow_dispatch: {}
+
     push:
         branches:
             - main
@@ -9,17 +11,38 @@ on:
         branches:
             - main
 
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+    contents: read
+
 jobs:
     test:
+        name: Test
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
+            - name: Checkout Repository
+              uses: actions/checkout@v6.0.3
 
-            - uses: actions/setup-go@v5
+            - name: Setup Go
+              uses: actions/setup-go@v6.4.0
               with:
+                  go-version-file: ./go.mod
                   cache: true
-                  go-version-file: 'go.mod'
 
-            - run: go mod verify
+            - name: Verify Modules
+              run: go mod verify
 
-            - run: make test
+            - name: Test
+              run: make unit-test
+
+            - name: Upload Coverage to Codecov
+              uses: codecov/codecov-action@v6.0.1
+              with:
+                  files: coverage/unit.cov
+                  # Coverage reporting is auxiliary; a failed upload (e.g. the
+                  # repository is not yet onboarded to Codecov) must not fail the
+                  # build. The race-enabled test run above is the hard gate.
+                  fail_ci_if_error: false

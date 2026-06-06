@@ -1,12 +1,69 @@
+# golangci-lint configuration. Schema: https://golangci-lint.run/usage/configuration/
+version: '2'
 run:
-    go: '1.22'
-    timeout: 5m
     allow-parallel-runners: true
 
 linters:
-    presets:
-        - test
-        - unused
+    # Sorted alphabetically. Keep this order when adding new linters.
+    enable:
+        - bodyclose # Checks HTTP response bodies are closed
+        - copyloopvar # Detects redundant loop-variable copies (Go 1.22+)
+        - dupword # Detects duplicate words in comments and strings
+        - durationcheck # Catches time.Duration multiplication bugs
+        - errcheck # Flags unchecked errors, including `_ = err` discards
+        - errname # Sentinel errors are Err-prefixed, error types Error-suffixed
+        - errorlint # Enforces the Go 1.13+ error wrapping scheme
+        - fatcontext # Detects context nesting in loops (e.g. context.WithValue)
+        - forcetypeassert # Flags type assertions without an ok check
+        - gosec # Inspects source for security problems
+        - intrange # Finds loops replaceable with Go 1.22+ integer ranges
+        - misspell # Finds common spelling mistakes
+        - nakedret # Flags naked returns in longer functions
+        - nilerr # Flags returning nil after checking a non-nil error
+        - nolintlint # Reports ill-formed or unused nolint directives
+        - perfsprint # Finds fmt.Sprintf calls with faster alternatives
+        - recvcheck # Ensures a consistent receiver type per type
+        - revive # Narrowed to receiver-naming below
+        - testifylint # Enforces testify best practices
+        - unconvert # Removes unnecessary type conversions
+        - usestdlibvars # Detects where stdlib constants could be used
+        - whitespace # Removes unnecessary leading/trailing blank lines in blocks
 
-    disable:
-        - exhaustruct
+    settings:
+        errcheck:
+            check-type-assertions: true
+            check-blank: true # Flags `_ = err` discards
+        revive:
+            rules:
+                - name: receiver-naming # Single letter or short abbreviation (h, s, r, c)
+                  severity: warning
+        staticcheck:
+            checks:
+                - all
+                - '-S1011' # False positives occur in some patterns we use
+                - '-ST1000' # Package comment style is not enforced
+                - '-ST1003' # Exported variables do not require comments
+                - '-SA1012' # Deprecated API usage is acceptable for compatibility
+        testifylint:
+            disable:
+                - equal-values # Allow EqualValues to avoid type casting
+
+    exclusions:
+        rules:
+            - path: '(.+)_test\.go'
+              linters:
+                  - bodyclose # Tests hold response bodies for assertions
+                  - gosec # File I/O and test data are controlled
+
+            - path: 'server\.go'
+              # The session-affinity cookie's HttpOnly/Secure/SameSite attributes
+              # are configured by the application via CookieOptions to match its
+              # deployment (HTTP in dev, HTTPS in prod), so they cannot be hardcoded.
+              text: G124
+              linters:
+                  - gosec
+
+formatters:
+    enable:
+        - gofmt # Canonical formatting (neutral on var/:= choice)
+        - goimports # Groups imports into stdlib and non-stdlib

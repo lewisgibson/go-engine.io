@@ -1,11 +1,11 @@
 module github.com/lewisgibson/go-engine.io
 
-go 1.22
+go 1.26.4
 
 require (
-	github.com/stretchr/testify v1.9.0
-	go.uber.org/mock v0.4.0
-	nhooyr.io/websocket v1.8.11
+	github.com/coder/websocket v1.8.14
+	github.com/stretchr/testify v1.11.1
+	go.uber.org/mock v0.6.0
 )
 
 require (

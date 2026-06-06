@@ -1,6 +1,8 @@
-name: build
+name: Build
 
 on:
+    workflow_dispatch: {}
+
     push:
         branches:
             - main
@@ -9,17 +11,35 @@ on:
         branches:
             - main
 
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+    contents: read
+
 jobs:
     build:
+        name: Build
         runs-on: ubuntu-latest
         steps:
-            - uses: actions/checkout@v4
+            - name: Checkout Repository
+              uses: actions/checkout@v6.0.3
 
-            - uses: actions/setup-go@v5
+            - name: Setup Go
+              uses: actions/setup-go@v6.4.0
               with:
+                  go-version-file: ./go.mod
                   cache: true
-                  go-version-file: 'go.mod'
 
-            - run: go mod verify
+            - name: Verify Modules
+              run: go mod verify
 
-            - run: make build
+            - name: Vet
+              run: go vet ./...
+
+            - name: Build
+              run: make build
+
+            - name: Build Examples
+              run: make build-examples

@@ -1,0 +1,13 @@
+vendor/
+node_modules/
+test/interop/node_modules/
+coverage/
+bin/
+custom-gcl
+.worktrees/
+go.sum
+
+# lockfiles are managed by the package manager
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# go-engine.io pre-push hook
+# Blocks direct pushes to main. Use a feature branch + pull request.
+# Install with: make hooks
+set -euo pipefail
+
+while read -r _ _ remote_ref _; do
+  if [[ "$remote_ref" == "refs/heads/main" ]]; then
+    printf '\033[0;31mERROR: Direct push to main is blocked.\033[0m\n' >&2
+    echo "Use a feature branch and pull request instead." >&2
+    exit 1
+  fi
+done
+
+exit 0

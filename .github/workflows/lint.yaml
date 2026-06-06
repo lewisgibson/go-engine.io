@@ -1,0 +1,113 @@
+name: Lint
+
+on:
+    workflow_dispatch: {}
+
+    push:
+        branches:
+            - main
+
+    pull_request:
+        branches:
+            - main
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+    contents: read
+
+jobs:
+    go:
+        name: Go
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v6.0.3
+
+            - name: Setup Go
+              uses: actions/setup-go@v6.4.0
+              with:
+                  go-version-file: ./go.mod
+                  cache: true
+
+            - name: Lint
+              uses: golangci/golangci-lint-action@v9.2.1
+              with:
+                  version: v2.12.2
+
+    actions:
+        name: Actions
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v6.0.3
+
+            - name: Register Problem Matcher
+              run: |
+                  cat > /tmp/actionlint.json <<'EOF'
+                  {"problemMatcher":[{"owner":"actionlint","pattern":[{"regexp":"^([^\\s]+):(\\d+):(\\d+):\\s(.+)$","file":1,"line":2,"column":3,"message":4}]}]}
+                  EOF
+                  echo "::add-matcher::/tmp/actionlint.json"
+
+            - name: Lint
+              env:
+                  ACTIONLINT_VERSION: 1.7.12
+              run: |
+                  bash <(curl -sSfL "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash") "${ACTIONLINT_VERSION}"
+                  ./actionlint -no-color -shellcheck=
+
+    prettier:
+        name: Prettier
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v6.0.3
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v6.4.0
+              with:
+                  node-version: 22
+
+            - name: Install Prettier
+              run: command -v prettier >/dev/null 2>&1 || npm install --global --no-save prettier@3.4.2
+
+            - name: Check Formatting
+              run: prettier --check '**/*.{yml,yaml,json,md,html}'
+
+    shell:
+        name: Shell
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v6.0.3
+
+            - name: Install Shellcheck
+              env:
+                  SHELLCHECK_VERSION: 0.10.0
+              run: |
+                  if ! command -v shellcheck >/dev/null 2>&1; then
+                      curl -sSfL "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" \
+                          | sudo tar -xJ -C /usr/local/bin --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+                  fi
+                  shellcheck --version
+
+            - name: Register Problem Matcher
+              run: |
+                  cat > /tmp/shellcheck.json <<'EOF'
+                  {"problemMatcher":[{"owner":"shellcheck","pattern":[{"regexp":"^([^:]+):(\\d+):(\\d+):\\s+(note|warning|error):\\s+(.+)$","file":1,"line":2,"column":3,"severity":4,"message":5}]}]}
+                  EOF
+                  echo "::add-matcher::/tmp/shellcheck.json"
+
+            - name: Lint
+              run: |
+                  mapfile -d '' files < <(find . \
+                      -type d \( -name vendor -o -name node_modules -o -name .git -o -name .worktrees \) -prune -false \
+                      -o -type f -name '*.sh' -print0)
+                  if [ "${#files[@]}" -eq 0 ]; then
+                      echo "No shell scripts found"
+                      exit 0
+                  fi
+                  printf '%s\n' "${files[@]}"
+                  shellcheck --format=gcc "${files[@]}"

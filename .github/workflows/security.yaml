@@ -1,0 +1,122 @@
+name: Security
+
+on:
+    workflow_dispatch: {}
+
+    push:
+        branches:
+            - main
+
+    pull_request:
+        branches:
+            - main
+
+    schedule:
+        # Weekly, Monday 00:00 UTC, so newly disclosed advisories surface even
+        # without a push.
+        - cron: '0 0 * * 1'
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+    contents: read
+
+jobs:
+    govulncheck:
+        name: Govulncheck
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v6.0.3
+
+            - name: Setup Go
+              uses: actions/setup-go@v6.4.0
+              with:
+                  go-version-file: ./go.mod
+                  cache: true
+
+            - name: Install Govulncheck
+              run: command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
+
+            - name: Scan
+              run: govulncheck ./...
+
+    trivy:
+        name: Trivy
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v6.0.3
+
+            - name: Install Trivy
+              env:
+                  TRIVY_VERSION: 0.71.0
+              run: |
+                  if ! command -v trivy >/dev/null 2>&1; then
+                      curl -sSfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+                          | sudo tar -xz -C /usr/local/bin trivy
+                      sudo chmod +x /usr/local/bin/trivy
+                  fi
+                  trivy --version
+
+            - name: Scan Filesystem
+              run: |
+                  trivy fs . \
+                      --scanners vuln,misconfig \
+                      --severity HIGH,CRITICAL \
+                      --ignore-unfixed \
+                      --exit-code 1 \
+                      --skip-dirs vendor \
+                      --skip-dirs node_modules \
+                      --skip-dirs .worktrees
+
+    gitleaks:
+        name: Gitleaks
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v6.0.3
+              # fetch-depth: 0 is deliberate. The scan walks the full
+              # $BASE..$HEAD commit range (see "Scan for Secrets in New
+              # Commits" below) -- a short-depth fetch risks silently
+              # missing secrets in deep PRs, which is a security regression.
+              with:
+                  fetch-depth: 0
+
+            - name: Install Gitleaks
+              run: |
+                  if ! command -v gitleaks >/dev/null 2>&1; then
+                      curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
+                          | sudo tar -xz -C /usr/local/bin gitleaks
+                      sudo chmod +x /usr/local/bin/gitleaks
+                  fi
+                  gitleaks version
+
+            - name: Scan for Secrets in New Commits
+              env:
+                  BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+                  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+              run: |
+                  set -euo pipefail
+
+                  # Scan only newly-introduced commits, never full history. Historical
+                  # leaks are tracked via GitHub secret scanning alerts and rotated
+                  # separately. CI blocks only on NEW secrets being added.
+                  if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+                      echo "No base SHA, scanning HEAD commit only"
+                      RANGE="--max-count=1 ${HEAD_SHA}"
+                  else
+                      echo "Scanning range ${BASE_SHA}..${HEAD_SHA}"
+                      RANGE="${BASE_SHA}..${HEAD_SHA}"
+                  fi
+
+                  # --verbose prints each finding (rule, file, line, match) so CI
+                  # logs show exactly what leaked. No --redact because any secret
+                  # that reaches a commit gets rotated regardless.
+                  gitleaks detect \
+                      --source . \
+                      --no-banner \
+                      --verbose \
+                      --log-opts="${RANGE}"

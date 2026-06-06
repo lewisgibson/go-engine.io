@@ -1,8 +1,42 @@
 {
-    "go.lintTool": "golangci-lint",
-    "go.lintFlags": ["--fast"],
+    // Expose integration-tagged tests (e.g. test/interop) to the editor so
+    // gopls type-checks them like any other file.
+    "go.buildTags": "integration",
 
+    "go.lintTool": "golangci-lint",
+    "go.lintFlags": ["--path-mode=abs"],
+    "go.lintOnSave": "workspace",
+
+    // golangci-lint owns gofmt/goimports formatting; let the editor run it.
+    "go.formatTool": "custom",
+    "go.formatFlags": ["fmt", "--stdin"],
+    "go.alternateTools": {
+        "customFormatter": "golangci-lint"
+    },
+
+    // golangci-lint already runs staticcheck and govet, so disable the
+    // overlapping gopls analyses to avoid duplicate diagnostics.
+    "gopls": {
+        "staticcheck": false,
+        "analyses": {
+            "unusedparams": false,
+            "unusedwrite": false,
+            "unusedvariable": false,
+            "unusedfunc": false,
+            "unreachable": false,
+            "fieldalignment": false,
+            "shadow": false,
+            "nilness": false
+        }
+    },
+
+    // Generated mocks are read-only; edit the source and regenerate instead.
     "files.readonlyInclude": {
-        "internal/mocks/*.go": true
+        "internal/mocks/*.go": true,
+        "vendor/**": true
+    },
+
+    "files.exclude": {
+        "coverage": true
     }
 }

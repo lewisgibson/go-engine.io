@@ -1,0 +1,46 @@
+name: Interop
+
+on:
+    workflow_dispatch: {}
+
+    push:
+        branches:
+            - main
+
+    pull_request:
+        branches:
+            - main
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+    contents: read
+
+jobs:
+    interop:
+        name: Interop
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Repository
+              uses: actions/checkout@v6.0.3
+
+            - name: Setup Go
+              uses: actions/setup-go@v6.4.0
+              with:
+                  go-version-file: ./go.mod
+                  cache: true
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v6.4.0
+              with:
+                  node-version: 22
+                  cache: npm
+                  cache-dependency-path: test/interop/package-lock.json
+
+            - name: Install JS Dependencies
+              run: npm --prefix test/interop ci
+
+            - name: Run Interop Tests
+              run: go test -tags interop -race ./test/interop/...

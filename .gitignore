@@ -7,3 +7,17 @@ coverage
 
 # build output
 bin
+
+# git worktrees
+.worktrees/
+.claude/worktrees/
+
+# golangci-lint custom build
+.custom-gcl.yml
+custom-gcl
+
+# interop test node modules
+test/interop/node_modules
+
+# claude runtime
+.claude/*.lock

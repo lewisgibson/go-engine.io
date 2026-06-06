@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+# go-engine.io pre-commit hook
+# Mirrors CI checks locally so Claude Code agents catch failures before push,
+# removing the need to wait for GitHub Actions. Change detection keeps it fast:
+# only checks relevant to staged files run.
+#
+# Install with: make hooks
+#
+# Output is structured with clear section markers so that CI tools and
+# AI assistants (Claude) can identify exactly which check failed and why.
+#
+# CI checks NOT replicated here (too heavy for local pre-commit):
+#   - trivy: filesystem scanner, requires large binary + DB download
+# This runs only in CI. All other CI checks are covered below.
+
+set -euo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+YELLOW='\033[0;33m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+passed=0
+failed=0
+skipped=0
+failures=""
+
+run_check() {
+    local name="$1"
+    shift
+    printf "\n${CYAN}${BOLD}══════════════════════════════════════════════${NC}\n"
+    printf "${CYAN}${BOLD}PRE-COMMIT CHECK: %s${NC}\n" "$name"
+    printf "${CYAN}${BOLD}══════════════════════════════════════════════${NC}\n\n"
+
+    if "$@"; then
+        printf "\n${GREEN}✓ %s passed${NC}\n" "$name"
+        passed=$((passed + 1))
+    else
+        printf "\n${RED}✗ %s FAILED${NC}\n" "$name"
+        failed=$((failed + 1))
+        failures="${failures}\n  - ${name}"
+        return 1
+    fi
+}
+
+skip_check() {
+    local name="$1"
+    local reason="$2"
+    printf "\n${YELLOW}⊘ %s skipped (%s)${NC}\n" "$name" "$reason"
+    skipped=$((skipped + 1))
+}
+
+STAGED=$(git diff --cached --name-only --diff-filter=d)
+if [ -z "$STAGED" ]; then
+    echo "No staged files."
+    exit 0
+fi
+
+has_go_changes()       { echo "$STAGED" | grep -qE '\.go$|^go\.(mod|sum)$|^vendor/|^Makefile$|^\.golangci\.yml$'; }
+has_workflow_changes() { echo "$STAGED" | grep -qE '^\.github/(workflows|actions)/|^\.github/actionlint\.yaml$'; }
+has_shell_changes()    { echo "$STAGED" | grep -qE '\.sh$'; }
+has_prettier_changes() { echo "$STAGED" | grep -qE '\.(ya?ml|json|md|html)$'; }
+
+check_fakes() {
+    # Compare the working-tree state before and after, so only changes that
+    # `make fakes` itself introduces count as stale -- pre-existing unrelated
+    # edits appear in both snapshots and do not trigger a false failure.
+    local before after
+    before=$(git status --porcelain)
+    make fakes 2>&1
+    after=$(git status --porcelain)
+    if [ "$before" != "$after" ]; then
+        echo ""
+        echo "ERROR: Generated files are out of date after running 'make fakes'. Run 'make fakes' and commit the result:"
+        echo ""
+        git status --porcelain
+        return 1
+    fi
+    echo "Generated files are up to date."
+}
+
+check_gitleaks() {
+    command -v gitleaks >/dev/null 2>&1 || go install github.com/zricethezav/gitleaks/v8@v8.21.2
+    gitleaks protect --staged --no-banner --redact
+}
+
+check_actionlint() {
+    command -v actionlint >/dev/null 2>&1 || go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+    actionlint -no-color -shellcheck=
+}
+
+check_shellcheck() {
+    if ! command -v shellcheck >/dev/null 2>&1; then
+        echo "shellcheck not installed. Install: https://github.com/koalaman/shellcheck/releases/tag/v0.10.0"
+        return 1
+    fi
+    local files
+    files=$(echo "$STAGED" | grep -E '\.sh$' || true)
+    if [ -n "$files" ]; then
+        echo "$files" | xargs shellcheck --format=gcc
+    fi
+}
+
+check_prettier() {
+    command -v prettier >/dev/null 2>&1 || npm install --global --no-save prettier@3.4.2
+    local files
+    files=$(echo "$STAGED" | grep -E '\.(ya?ml|json|md|html)$' || true)
+    if [ -n "$files" ]; then
+        echo "$files" | xargs prettier --check
+    fi
+}
+
+check_govulncheck() {
+    command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@v1.3.0
+    govulncheck ./...
+}
+
+# Track overall status -- run all checks even if some fail.
+overall=0
+
+# --- Core Go checks (CI: lint/go, test, build) ---
+if has_go_changes; then
+    run_check "Format" make format || overall=1
+    # Re-stage only the files that were already staged, so a repo-wide `make
+    # format` cannot sweep unrelated working-tree edits into the commit. A
+    # while-read loop is portable (no xargs -r) and tolerates spaces in paths.
+    while IFS= read -r file; do
+        [ -n "$file" ] && git add -- "$file"
+    done <<<"$STAGED"
+    run_check "Lint" make lint || overall=1
+    run_check "Build" make build || overall=1
+    run_check "Unit Tests" make test || overall=1
+    run_check "Generated Files" check_fakes || overall=1
+else
+    skip_check "Go Checks" "no Go files changed"
+fi
+
+# --- Security: gitleaks (CI: security/gitleaks, always runs) ---
+run_check "Gitleaks" check_gitleaks || overall=1
+
+# --- Security: govulncheck (CI: security/govulncheck) ---
+if has_go_changes; then
+    run_check "Govulncheck" check_govulncheck || overall=1
+else
+    skip_check "Govulncheck" "no Go changes"
+fi
+
+# --- Lint: actionlint (CI: lint/actions) ---
+if has_workflow_changes; then
+    run_check "Actionlint" check_actionlint || overall=1
+else
+    skip_check "Actionlint" "no workflow files changed"
+fi
+
+# --- Lint: shellcheck ---
+if has_shell_changes; then
+    run_check "Shellcheck" check_shellcheck || overall=1
+else
+    skip_check "Shellcheck" "no shell scripts changed"
+fi
+
+# --- Lint: prettier ---
+if has_prettier_changes; then
+    run_check "Prettier" check_prettier || overall=1
+else
+    skip_check "Prettier" "no formattable files changed"
+fi
+
+printf "\n${BOLD}══════════════════════════════════════════════${NC}\n"
+if [ "$overall" -eq 0 ]; then
+    printf "${GREEN}${BOLD}PRE-COMMIT: ALL %d CHECKS PASSED" "$passed"
+    if [ "$skipped" -gt 0 ]; then printf ", %d SKIPPED" "$skipped"; fi
+    printf "${NC}\n"
+else
+    printf "${RED}${BOLD}PRE-COMMIT: %d FAILED, %d PASSED" "$failed" "$passed"
+    if [ "$skipped" -gt 0 ]; then printf ", %d SKIPPED" "$skipped"; fi
+    printf "${NC}\n"
+    printf "${RED}Failed checks:%b${NC}\n" "$failures"
+fi
+printf "${BOLD}══════════════════════════════════════════════${NC}\n\n"
+
+exit "$overall"
