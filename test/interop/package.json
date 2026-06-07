@@ -1,0 +1,11 @@
+{
+    "name": "go-engine-io-interop",
+    "version": "1.0.0",
+    "private": true,
+    "description": "Interoperability fixtures exercising the reference JS engine.io server and client against the Go library.",
+    "type": "module",
+    "dependencies": {
+        "engine.io": "^6.6.0",
+        "engine.io-client": "^6.6.0"
+    }
+}

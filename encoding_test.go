@@ -10,123 +10,169 @@ import (
 func TestEncodePacket(t *testing.T) {
 	t.Parallel()
 
-	// Arrange: create a packet
-	packet := engineio.Packet{
-		Type: engineio.PacketMessage,
-		Data: []byte("Hello, World!"),
+	tests := []struct {
+		name   string
+		packet engineio.Packet
+		want   []byte
+	}{
+		{
+			name:   "text message",
+			packet: engineio.Packet{Type: engineio.PacketMessage, Data: []byte("hello")},
+			want:   []byte("4hello"),
+		},
+		{
+			name:   "ping without data",
+			packet: engineio.Packet{Type: engineio.PacketPing},
+			want:   []byte("2"),
+		},
+		{
+			name:   "open packet with json",
+			packet: engineio.Packet{Type: engineio.PacketOpen, Data: []byte(`{"sid":"x"}`)},
+			want:   []byte(`0{"sid":"x"}`),
+		},
+		{
+			name:   "binary message",
+			packet: engineio.Packet{Type: engineio.PacketMessage, Data: []byte{0x01, 0x02, 0x03, 0x04}, IsBinary: true},
+			want:   []byte("bAQIDBA=="),
+		},
+		{
+			name:   "empty binary message",
+			packet: engineio.Packet{Type: engineio.PacketMessage, IsBinary: true},
+			want:   []byte("b"),
+		},
 	}
 
-	// Act: encode the packet
-	encodedPacket := engineio.EncodePacket(packet)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	// Assert: the encoded packet is the expected packet
-	expectedPacket := []byte{0x34, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x2c, 0x20, 0x57, 0x6f, 0x72, 0x6c, 0x64, 0x21}
-	require.Equal(t, expectedPacket, encodedPacket)
-}
+			// Act: encode the packet
+			encoded := engineio.EncodePacket(tt.packet)
 
-func TestEncodePacket_Binary(t *testing.T) {
-	t.Parallel()
-
-	// Arrange: create a packet
-	packet := engineio.Packet{
-		Type: engineio.PacketMessage,
-		Data: []byte("Hello, World!\n"),
+			// Assert: the encoding matches the expected wire bytes
+			require.Equal(t, tt.want, encoded)
+		})
 	}
-
-	// Act: encode the packet
-	encodedPacket := engineio.EncodePacket(packet)
-
-	// Assert: the encoded packet is the expected packet
-	expectedPacket := []byte{0x62, 0x53, 0x47, 0x56, 0x73, 0x62, 0x47, 0x38, 0x73, 0x49, 0x46, 0x64, 0x76, 0x63, 0x6d, 0x78, 0x6b, 0x49, 0x51, 0x6f, 0x3d}
-	require.Equal(t, expectedPacket, encodedPacket)
 }
 
 func TestDecodePacket(t *testing.T) {
 	t.Parallel()
 
-	// Arrange: create a packet
-	input := []byte{0x34, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x2c, 0x20, 0x57, 0x6f, 0x72, 0x6c, 0x64, 0x21}
-
-	// Act: decode the packet
-	decodedPacket, err := engineio.DecodePacket(input)
-	require.NoError(t, err)
-
-	// Assert: the decoded packet is the same
-	expectedPacket := engineio.Packet{
-		Type: engineio.PacketMessage,
-		Data: []byte("Hello, World!"),
+	tests := []struct {
+		name  string
+		input []byte
+		want  engineio.Packet
+	}{
+		{
+			name:  "text message",
+			input: []byte("4hello"),
+			want:  engineio.Packet{Type: engineio.PacketMessage, Data: []byte("hello")},
+		},
+		{
+			name:  "ping without data",
+			input: []byte("2"),
+			want:  engineio.Packet{Type: engineio.PacketPing, Data: []byte{}},
+		},
+		{
+			name:  "binary message",
+			input: []byte("bAQIDBA=="),
+			want:  engineio.Packet{Type: engineio.PacketMessage, Data: []byte{0x01, 0x02, 0x03, 0x04}, IsBinary: true},
+		},
+		{
+			name:  "empty binary message",
+			input: []byte("b"),
+			want:  engineio.Packet{Type: engineio.PacketMessage, Data: []byte{}, IsBinary: true},
+		},
 	}
-	require.Equal(t, expectedPacket, decodedPacket)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Act: decode the packet
+			decoded, err := engineio.DecodePacket(tt.input)
+			require.NoError(t, err)
+
+			// Assert: the decoded packet matches the expectation
+			require.Equal(t, tt.want, decoded)
+		})
+	}
 }
 
-func TestDecodePacket_EmptyPacket(t *testing.T) {
+func TestDecodePacket_EmptyInput(t *testing.T) {
 	t.Parallel()
 
-	// Arrange: create an empty packet
-	input := []byte{}
+	// Act: decode an empty input
+	packet, err := engineio.DecodePacket([]byte{})
 
-	// Act: decode the packet
-	packet, err := engineio.DecodePacket(input)
-
-	// Assert: the decode should return an error
-	require.ErrorIsf(t, err, engineio.ErrEmptyPacket, "decode should return an error")
+	// Assert: an empty-packet error is returned
+	require.ErrorIs(t, err, engineio.ErrEmptyPacket)
 	require.Zero(t, packet)
 }
 
-func TestDecodePacket_Binary(t *testing.T) {
+func TestDecodePacket_InvalidType(t *testing.T) {
 	t.Parallel()
 
-	// Arrange: create a packet
-	input := []byte{0x62, 0x53, 0x47, 0x56, 0x73, 0x62, 0x47, 0x38, 0x73, 0x49, 0x46, 0x64, 0x76, 0x63, 0x6d, 0x78, 0x6b, 0x49, 0x51, 0x6f, 0x3d}
-
-	// Act: decode the packet
-	decodedPacket, err := engineio.DecodePacket(input)
-	require.NoError(t, err)
-
-	// Assert: the decoded packet is the same
-	expectedPacket := engineio.Packet{
-		Type: engineio.PacketMessage,
-		Data: []byte("Hello, World!\n"),
+	tests := []struct {
+		name  string
+		input []byte
+	}{
+		{name: "out of range digit", input: []byte("7")},
+		{name: "non-digit byte", input: []byte("x")},
 	}
-	require.Equal(t, expectedPacket, decodedPacket)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Act: decode the malformed packet
+			packet, err := engineio.DecodePacket(tt.input)
+
+			// Assert: an invalid-type error is returned
+			require.ErrorIs(t, err, engineio.ErrInvalidPacketType)
+			require.Zero(t, packet)
+		})
+	}
 }
 
-func TestEncodeDecode(t *testing.T) {
+func TestDecodePacket_InvalidBase64(t *testing.T) {
 	t.Parallel()
 
-	// Arrange: create a packet
-	packet := engineio.Packet{
-		Type: engineio.PacketMessage,
-		Data: []byte("Hello, World!"),
-	}
+	// Act: decode a binary packet with invalid base64
+	packet, err := engineio.DecodePacket([]byte("b@@@"))
 
-	// Act: encode the packet
-	encodedPacket := engineio.EncodePacket(packet)
-
-	// Act: decode the packet
-	decodedPacket, err := engineio.DecodePacket(encodedPacket)
-	require.NoError(t, err)
-
-	// Assert: the decoded packet is the same as the original packet
-	require.Equal(t, packet, decodedPacket)
+	// Assert: an error is returned
+	require.Error(t, err)
+	require.Zero(t, packet)
 }
 
-func TestEncodeDecode_Binary(t *testing.T) {
+func TestEncodeDecode_RoundTrip(t *testing.T) {
 	t.Parallel()
 
-	// Arrange: create a packet
-	packet := engineio.Packet{
-		Type: engineio.PacketMessage,
-		Data: []byte("Hello, World!\n"),
+	tests := []struct {
+		name   string
+		packet engineio.Packet
+	}{
+		{
+			name:   "text message",
+			packet: engineio.Packet{Type: engineio.PacketMessage, Data: []byte("Hello, World!")},
+		},
+		{
+			name:   "binary message",
+			packet: engineio.Packet{Type: engineio.PacketMessage, Data: []byte{0x00, 0xff, 0x10, 0x80}, IsBinary: true},
+		},
 	}
 
-	// Act: encode the packet
-	encodedPacket := engineio.EncodePacket(packet)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	// Act: decode the packet
-	decodedPacket, err := engineio.DecodePacket(encodedPacket)
-	require.NoError(t, err)
+			// Act: encode then decode the packet
+			decoded, err := engineio.DecodePacket(engineio.EncodePacket(tt.packet))
+			require.NoError(t, err)
 
-	// Assert: the decoded packet is the same as the original packet
-	require.Equal(t, packet, decodedPacket)
+			// Assert: the round trip preserves the packet
+			require.Equal(t, tt.packet, decoded)
+		})
+	}
 }

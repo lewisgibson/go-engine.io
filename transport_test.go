@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	engineio "github.com/lewisgibson/go-engine.io"
-	"github.com/lewisgibson/go-engine.io/internal/mocks"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -15,55 +14,51 @@ import (
 func TestTransportType_String(t *testing.T) {
 	t.Parallel()
 
-	// Assert: the string representation of the transport type should never be empty.
+	// Assert: the string representation of the transport type should never be empty
 	require.NotEmpty(t, engineio.TransportTypePolling.String())
 }
 
 func TestTransportState_String(t *testing.T) {
 	t.Parallel()
 
-	// Assert: the string representation of the transport state should never be empty.
+	// Assert: the string representation of the transport state should never be empty
 	require.NotEmpty(t, engineio.TransportStateOpen.String())
 }
 
 func TestTransportRoundTripper_RoundTrip_NilTransportClient(t *testing.T) {
 	t.Parallel()
 
-	// Arrange: create a new transport round tripper.
+	// Arrange: create a new transport round tripper
 	transport := engineio.TransportRoundTripper{}
 
-	// Act: round trip a request.
+	// Act: round trip a request
 	_, err := transport.RoundTrip(&http.Request{})
-	require.ErrorIsf(t, err, engineio.ErrTransportRoundTripperClientRequired, "error should be ErrTransportRoundTripperClientRequired")
+	require.ErrorIs(t, err, engineio.ErrTransportRoundTripperClientRequired)
 }
 
 func TestTransportRoundTripper_RoundTrip_CallsTransportClient(t *testing.T) {
 	t.Parallel()
 
-	// Arrange: create a new mock controller.
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	// Arrange: create a new mock transport client.
-	mockTransportClient := mocks.NewMockTransportClient(ctrl)
+	// Arrange: create a new mock transport client
+	mockTransportClient := NewMockTransportClient(gomock.NewController(t))
 	mockTransportClient.EXPECT().
 		Do(gomock.Any()).
 		Return(&http.Response{
 			StatusCode: http.StatusOK,
 		}, nil)
 
-	// Arrange: create a new transport round tripper.
+	// Arrange: create a new transport round tripper
 	transport := engineio.TransportRoundTripper{
 		Client: mockTransportClient,
 	}
 
-	// Act: round trip a request.
+	// Act: round trip a request
 	r, err := transport.RoundTrip(&http.Request{})
-	require.NoErrorf(t, err, "error should be nil")
+	require.NoError(t, err)
 
-	// Assert: the response should not be nil.
-	require.NotNilf(t, r, "response should not be nil")
-	require.Equalf(t, http.StatusOK, r.StatusCode, "response status code should be http.StatusOK")
+	// Assert: the response should not be nil
+	require.NotNil(t, r)
+	require.Equal(t, http.StatusOK, r.StatusCode)
 }
 
 func TestTransports(t *testing.T) {
@@ -76,39 +71,36 @@ func TestTransports(t *testing.T) {
 		t.Run(fmt.Sprintf("%s without url", transportType), func(t *testing.T) {
 			t.Parallel()
 
-			// Act: create a new transport without a URL.
-			transport, err := transportConstructor(nil, engineio.TransportOptions{})
+			// Act: create a new transport without a URL
+			transport, err := transportConstructor(nil, nil, nil)
 
-			// Assert: an error should be returned and the transport should be nil.
-			require.Errorf(t, err, "url is required")
-			require.Nilf(t, transport, "transport should be nil")
+			// Assert: an error should be returned and the transport should be nil
+			require.Error(t, err)
+			require.Nil(t, transport)
 		})
 
 		t.Run(fmt.Sprintf("%s without options", transportType), func(t *testing.T) {
 			t.Parallel()
 
-			// Act: create a new transport without options.
-			transport, err := transportConstructor(u, engineio.TransportOptions{})
+			// Act: create a new transport without options
+			transport, err := transportConstructor(u, nil, nil)
 
-			// Assert: no error should be returned and the transport should not be nil.
-			require.NoErrorf(t, err, "transport should not return an error")
-			require.NotNilf(t, transport, "transport should not be nil")
+			// Assert: no error should be returned and the transport should not be nil
+			require.NoError(t, err)
+			require.NotNil(t, transport)
 		})
 
 		t.Run(fmt.Sprintf("%s with options", transportType), func(t *testing.T) {
 			t.Parallel()
 
-			// Act: create a new transport with options.
-			transport, err := transportConstructor(u, engineio.TransportOptions{
-				Client: http.DefaultClient,
-				Header: http.Header{
-					"Authorization": []string{"Bearer token"},
-				},
+			// Act: create a new transport with options
+			transport, err := transportConstructor(u, http.DefaultClient, http.Header{
+				"Authorization": []string{"Bearer token"},
 			})
 
-			// Assert: no error should be returned and the transport should not be nil.
-			require.NoErrorf(t, err, "transport should not return an error")
-			require.NotNilf(t, transport, "transport should not be nil")
+			// Assert: no error should be returned and the transport should not be nil
+			require.NoError(t, err)
+			require.NotNil(t, transport)
 		})
 	}
 }
