@@ -3,6 +3,8 @@ package engineio
 import (
 	"errors"
 	"sync"
+
+	"github.com/lewisgibson/go-engine.io/internal"
 )
 
 // Sentinel Errors.
@@ -10,6 +12,37 @@ var (
 	errPollOverlap = errors.New("poll overlap")
 	errPollClosed  = errors.New("poll transport closed")
 )
+
+// maxPooledPayloadBuffer caps the capacity of a poll payload buffer kept in the
+// pool, so a one-off large payload does not leave an oversized buffer pinned in
+// memory for the life of the process.
+const maxPooledPayloadBuffer = 64 * 1024
+
+// pollPayloadPool reuses the byte buffers that carry an encoded poll payload from
+// the flushing goroutine to the held poll. The held poll returns its buffer once
+// it has written the response, so a steady stream of polls reuses buffers instead
+// of allocating one per delivery.
+var pollPayloadPool = internal.NewPool(func() *[]byte { return new([]byte) })
+
+// getPollBuffer takes a buffer from the pool and encodes the packets into it,
+// ready to deliver to a held poll.
+func getPollBuffer(packets []Packet) *[]byte {
+	buffer := pollPayloadPool.Get()
+	*buffer = appendPayload((*buffer)[:0], packets)
+
+	return buffer
+}
+
+// putPollBuffer returns a delivered poll buffer to the pool unless it has grown
+// too large to be worth retaining.
+func putPollBuffer(buffer *[]byte) {
+	if cap(*buffer) > maxPooledPayloadBuffer {
+		return
+	}
+
+	*buffer = (*buffer)[:0]
+	pollPayloadPool.Put(buffer)
+}
 
 // serverPollingTransport is the server side of the HTTP long-polling transport.
 // At most one poll GET is held at a time; send delivers a payload to the held
@@ -19,7 +52,7 @@ type serverPollingTransport struct {
 	closed bool
 	// dataCh is non-nil while a poll GET is held. It is buffered so a delivery
 	// never blocks the sender; the held poll receives the payload and returns.
-	dataCh chan []byte
+	dataCh chan *[]byte
 }
 
 // newServerPollingTransport creates a polling transport with no poll held.
@@ -48,14 +81,14 @@ func (t *serverPollingTransport) send(packets []Packet) (bool, error) {
 	t.dataCh = nil
 	t.mu.Unlock()
 
-	ch <- EncodePayload(packets)
+	ch <- getPollBuffer(packets)
 
 	return true, nil
 }
 
 // hold registers a poll GET as the held request. A second concurrent poll, or a
 // poll on a closed transport, is rejected.
-func (t *serverPollingTransport) hold(ch chan []byte) error {
+func (t *serverPollingTransport) hold(ch chan *[]byte) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -73,14 +106,21 @@ func (t *serverPollingTransport) hold(ch chan []byte) error {
 	return nil
 }
 
-// release abandons a held poll (e.g. when the client disconnects).
-func (t *serverPollingTransport) release(ch chan []byte) {
+// release abandons a held poll (e.g. when the client disconnects). It reports
+// whether it reclaimed the channel before any delivery. false means a send,
+// writeNoop, or close already claimed it and a payload delivery is in flight on
+// the channel, so the caller must receive that payload to return its buffer to
+// the pool rather than orphan it.
+func (t *serverPollingTransport) release(ch chan *[]byte) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if t.dataCh == ch {
 		t.dataCh = nil
+		return true
 	}
+
+	return false
 }
 
 // writeNoop delivers a single noop to the held poll, releasing it. It is used
@@ -92,7 +132,7 @@ func (t *serverPollingTransport) writeNoop() {
 	t.mu.Unlock()
 
 	if ch != nil {
-		ch <- EncodePayload([]Packet{{Type: PacketNoop}})
+		ch <- getPollBuffer([]Packet{{Type: PacketNoop}})
 	}
 }
 
@@ -115,6 +155,6 @@ func (t *serverPollingTransport) close() {
 	t.mu.Unlock()
 
 	if ch != nil {
-		ch <- EncodePayload([]Packet{{Type: PacketClose}})
+		ch <- getPollBuffer([]Packet{{Type: PacketClose}})
 	}
 }

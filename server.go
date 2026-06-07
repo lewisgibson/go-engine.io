@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/coder/websocket"
+	"github.com/lewisgibson/go-engine.io/internal"
 )
 
 // pollCompressionThreshold is the minimum long-poll body size, in bytes, that is
@@ -130,6 +131,25 @@ func (s *Server) setSessionCookie(w http.ResponseWriter, id string) {
 	})
 }
 
+// gzipWriterPool and gzipBufferPool reuse the gzip writer and its output buffer
+// across compressed poll responses, so a busy server does not allocate a fresh
+// deflate writer (and its window) per response.
+var (
+	gzipWriterPool = internal.NewPool(func() *gzip.Writer { return gzip.NewWriter(io.Discard) })
+	gzipBufferPool = internal.NewPool(func() *bytes.Buffer { return new(bytes.Buffer) })
+)
+
+// putGzipBuffer returns a gzip output buffer to the pool unless it has grown too
+// large to be worth retaining.
+func putGzipBuffer(buffer *bytes.Buffer) {
+	if buffer.Cap() > maxPooledPayloadBuffer {
+		return
+	}
+
+	buffer.Reset()
+	gzipBufferPool.Put(buffer)
+}
+
 // writePollResponse writes a long-poll body, gzip-compressing it when compression
 // is enabled, the client advertises gzip, and the body is large enough to be
 // worth it. It returns any write error so the caller can close the session.
@@ -137,8 +157,14 @@ func (s *Server) writePollResponse(w http.ResponseWriter, r *http.Request, paylo
 	s.writePollHeaders(w)
 
 	if s.options.httpCompression && len(payload) >= pollCompressionThreshold && acceptsGzip(r) {
-		var buffer bytes.Buffer
-		var writer = gzip.NewWriter(&buffer)
+		buffer := gzipBufferPool.Get()
+		buffer.Reset()
+		defer putGzipBuffer(buffer)
+
+		writer := gzipWriterPool.Get()
+		writer.Reset(buffer)
+		defer gzipWriterPool.Put(writer)
+
 		if _, err := writer.Write(payload); err != nil {
 			return err
 		}
@@ -147,18 +173,14 @@ func (s *Server) writePollResponse(w http.ResponseWriter, r *http.Request, paylo
 		}
 
 		w.Header().Set("Content-Encoding", "gzip")
-		if _, err := w.Write(buffer.Bytes()); err != nil {
-			return err
-		}
+		_, err := w.Write(buffer.Bytes())
 
-		return nil
-	}
-
-	if _, err := w.Write(payload); err != nil {
 		return err
 	}
 
-	return nil
+	_, err := w.Write(payload)
+
+	return err
 }
 
 // acceptsGzip reports whether the request's Accept-Encoding advertises gzip.
@@ -314,7 +336,7 @@ func (s *Server) handleHandshake(w http.ResponseWriter, r *http.Request) {
 // handlePoll holds a long-poll GET until the session has data to deliver, the
 // session closes, or the client disconnects.
 func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request, socket *ServerSocket, polling *serverPollingTransport) {
-	var channel = make(chan []byte, 1)
+	var channel = make(chan *[]byte, 1)
 	if err := polling.hold(channel); err != nil {
 		if errors.Is(err, errPollOverlap) {
 			// A second concurrent poll breaks delivery ordering; reject it and
@@ -331,8 +353,10 @@ func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request, socket *Serv
 	socket.flush()
 
 	select {
-	case payload := <-channel:
-		if err := s.writePollResponse(w, r, payload); err != nil {
+	case buffer := <-channel:
+		err := s.writePollResponse(w, r, *buffer)
+		putPollBuffer(buffer)
+		if err != nil {
 			// The client did not receive this payload. flush already handed it off,
 			// so close the session rather than continue with a silent gap; the
 			// client treats a failed poll the same way and reconnects.
@@ -341,7 +365,12 @@ func (s *Server) handlePoll(w http.ResponseWriter, r *http.Request, socket *Serv
 		}
 
 	case <-r.Context().Done():
-		polling.release(channel)
+		// If a delivery had already claimed this poll before the cancellation, it is
+		// guaranteed to arrive on the channel; receive it so its pooled buffer is
+		// returned rather than dropped.
+		if !polling.release(channel) {
+			putPollBuffer(<-channel)
+		}
 		socket.closeWithReason("transport close", r.Context().Err())
 	}
 }

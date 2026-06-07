@@ -22,12 +22,18 @@ const BinaryMarker = 'b'
 // followed by its data. Binary messages sent over a transport with native
 // binary frames (WebSocket) are written as raw frames and never pass here.
 func EncodePacket(packet Packet) []byte {
+	return appendPacket(nil, packet)
+}
+
+// appendPacket appends packet's text wire form to dst and returns the extended
+// slice, so a caller encoding several packets can reuse one buffer instead of
+// allocating a fresh slice per packet. EncodePacket is appendPacket(nil, ...).
+func appendPacket(dst []byte, packet Packet) []byte {
 	if packet.IsBinary {
-		var encoded = base64.StdEncoding.EncodeToString(packet.Data)
-		return append([]byte{BinaryMarker}, encoded...)
+		return base64.StdEncoding.AppendEncode(append(dst, BinaryMarker), packet.Data)
 	}
 
-	return append([]byte{packet.Type.Byte()}, packet.Data...)
+	return append(append(dst, packet.Type.Byte()), packet.Data...)
 }
 
 // DecodePacket decodes a single packet from its text wire form. A leading

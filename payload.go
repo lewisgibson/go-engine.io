@@ -34,12 +34,22 @@ const (
 // v4-only: this library always speaks v4, so it never needs to produce the
 // legacy v2/v3 framings (it only decodes them, via DecodePayload).
 func EncodePayload(packets []Packet) []byte {
-	var encoded = make([][]byte, len(packets))
+	return appendPayload(nil, packets)
+}
+
+// appendPayload appends the v4 payload encoding of packets -- each packet's text
+// wire form joined by the record separator -- to dst and returns the extended
+// slice. It encodes straight into dst, so a caller can reuse a buffer instead of
+// allocating one slice per packet plus a join.
+func appendPayload(dst []byte, packets []Packet) []byte {
 	for i, packet := range packets {
-		encoded[i] = EncodePacket(packet)
+		if i > 0 {
+			dst = append(dst, Separator)
+		}
+		dst = appendPacket(dst, packet)
 	}
 
-	return bytes.Join(encoded, []byte{Separator})
+	return dst
 }
 
 // DecodePayload decodes a long-polling payload body into packets according to
