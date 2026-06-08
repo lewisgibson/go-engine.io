@@ -39,7 +39,7 @@ jobs:
               run: make unit-test
 
             - name: Upload Coverage to Codecov
-              uses: codecov/codecov-action@v6.0.1
+              uses: codecov/codecov-action@v7.0.0
               with:
                   files: coverage/unit.cov
                   # Coverage reporting is auxiliary; a failed upload (e.g. the
