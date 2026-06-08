@@ -41,8 +41,8 @@ jobs:
             - name: Upload Coverage to Codecov
               uses: codecov/codecov-action@v7.0.0
               with:
+                  token: ${{ secrets.CODECOV_TOKEN }}
                   files: coverage/unit.cov
-                  # Coverage reporting is auxiliary; a failed upload (e.g. the
-                  # repository is not yet onboarded to Codecov) must not fail the
-                  # build. The race-enabled test run above is the hard gate.
-                  fail_ci_if_error: false
+                  # Fail the build if the upload errors, so a broken Codecov
+                  # integration surfaces instead of being silently ignored.
+                  fail_ci_if_error: true

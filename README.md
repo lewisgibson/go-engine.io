@@ -1,7 +1,7 @@
 # go-engine.io
 
 [![Build Workflow](https://github.com/lewisgibson/go-engine.io/actions/workflows/build.yaml/badge.svg)](https://github.com/lewisgibson/go-engine.io/actions/workflows/build.yaml)
-[![codecov](https://codecov.io/gh/lewisgibson/go-engine.io/graph/badge.svg)](https://codecov.io/gh/lewisgibson/go-engine.io)
+[![codecov](https://codecov.io/gh/lewisgibson/go-engine.io/graph/badge.svg?token=IfLPy4oiyW)](https://codecov.io/gh/lewisgibson/go-engine.io)
 [![Pkg Go Dev](https://pkg.go.dev/badge/github.com/lewisgibson/go-engine.io)](https://pkg.go.dev/github.com/lewisgibson/go-engine.io)
 
 A Go implementation of the [Engine.IO](https://socket.io/docs/v4/engine-io-protocol/) v4 protocol: the transport layer that Socket.IO is built on. Engine.IO provides a reliable, bidirectional connection between a client and a server using HTTP long-polling and WebSocket, with an automatic upgrade from long-polling to WebSocket once a session is established. This package ships a client (`Socket`), a server (`Server`, an `http.Handler`), and a version-aware packet/payload codec.
