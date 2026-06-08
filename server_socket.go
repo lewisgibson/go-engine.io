@@ -51,9 +51,11 @@ type ServerConnectionHandler func(*ServerSocket)
 // application can round-trip binary data without downgrading it to text.
 type ServerMessageHandler func(data []byte, isBinary bool)
 
-// ServerCloseHandler is called once when a session closes. The cause is the
-// underlying error that triggered the close, or nil for a graceful close, so the
-// application can log or branch on why the session ended.
+// ServerCloseHandler is called once when a session closes. The reason is a short
+// human-readable label (e.g. "transport close", "ping timeout", "forced close").
+// The cause is the underlying error when one was captured, or nil otherwise; a
+// nil cause does not by itself mean a graceful close (a ping timeout also passes
+// nil), so branch on the reason rather than on whether cause is nil.
 type ServerCloseHandler func(reason string, cause error)
 
 // ServerSocket is a single connected Engine.IO session, handed to the

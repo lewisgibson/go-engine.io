@@ -36,8 +36,9 @@ go get github.com/lewisgibson/go-engine.io
 
 ### Client
 
-Create a `Socket`, register handlers, then `Open` it. Sends made before the socket
-opens are buffered and flushed once the handshake completes. All options are
+Create a `Socket`, register handlers, then `Open` it. Sends made after `Open()`
+but before the handshake completes are buffered and flushed once the socket opens;
+a `Send` before `Open()` (or after close) is silently dropped. All options are
 optional; `NewSocket(url)` works out of the box with the defaults in the table
 below.
 
@@ -62,7 +63,8 @@ func main() {
 		panic(err)
 	}
 
-	// Invoked once the handshake completes; safe to start sending here.
+	// Invoked once the handshake completes. You need not wait for it to send -- a
+	// Send any time after Open() is buffered and flushed here.
 	client.OnOpen(func() {
 		if err := client.Send(ctx, []engineio.Packet{
 			{Type: engineio.PacketMessage, Data: []byte("Hello")},
@@ -92,7 +94,8 @@ func main() {
 		fmt.Printf("error: %v\n", err)
 	})
 
-	// Invoked once when the socket closes. cause is nil for a graceful close.
+	// Invoked once when the socket closes. cause is the error if one occurred,
+	// else nil (a clean close and a ping timeout both pass nil; branch on reason).
 	client.OnClose(func(reason string, cause error) {
 		fmt.Printf("close: %s (%v)\n", reason, cause)
 	})
@@ -105,15 +108,15 @@ func main() {
 
 The client handlers are:
 
-| Handler                                       | Fires when                                                         |
-| --------------------------------------------- | ------------------------------------------------------------------ |
-| `OnOpen(func())`                              | The handshake completes and the socket is ready                    |
-| `OnMessage(func(data []byte, isBinary bool))` | An application message arrives                                     |
-| `OnPacket(func(Packet))`                      | Any packet arrives, including protocol packets                     |
-| `OnUpgrade(func(TransportType))`              | The socket switches to a better transport                          |
-| `OnUpgradeError(func(error))`                 | An upgrade probe fails (non-fatal; stays on the current transport) |
-| `OnError(func(error))`                        | A transport error occurs (not always fatal)                        |
-| `OnClose(func(reason string, cause error))`   | The socket closes                                                  |
+| Handler                                       | Fires when                                                                                                                |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `OnOpen(func())`                              | The handshake completes and the socket is ready                                                                           |
+| `OnMessage(func(data []byte, isBinary bool))` | An application message arrives                                                                                            |
+| `OnPacket(func(Packet))`                      | Any packet arrives, including protocol packets                                                                            |
+| `OnUpgrade(func(TransportType))`              | The socket switches to a better transport                                                                                 |
+| `OnUpgradeError(func(error))`                 | An upgrade probe fails (non-fatal; stays on the current transport)                                                        |
+| `OnError(func(error))`                        | A transport error occurs (not always fatal); also receives upgrade-probe failures when no `OnUpgradeError` handler is set |
+| `OnClose(func(reason string, cause error))`   | The socket closes                                                                                                         |
 
 The client options, with their defaults:
 
@@ -167,7 +170,7 @@ func main() {
 			}
 		})
 
-		// cause is nil for a graceful close.
+		// cause is the error if one occurred, else nil (branch on reason, not cause).
 		socket.OnClose(func(reason string, cause error) {
 			fmt.Printf("disconnected: %s (%s)\n", socket.ID(), reason)
 		})
@@ -192,7 +195,9 @@ func main() {
 - `OnMessage(func(data []byte, isBinary bool))` registers the message handler.
 - `OnClose(func(reason string, cause error))` registers the close handler.
 - `Send(data []byte, isBinary bool) error` queues a message; pass `true` to send
-  it as binary. It returns `ErrSocketClosed` if the session has closed.
+  it as binary. It returns `ErrSocketClosed` once the session is closing or closed
+  -- from the moment `Close()` (or a teardown) begins, which may be before the
+  close handler fires.
 - `ID() string` returns the session identifier from the handshake.
 - `Close() error` gracefully closes the session, delivering a close packet first.
 
@@ -216,24 +221,28 @@ chat-style relay built on `Sockets()`.
 
 The server options, with their defaults:
 
-| Option                                          | Default                       | Purpose                                                                                                       |
-| ----------------------------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `WithPingInterval(time.Duration)`               | `DefaultPingInterval` (25s)   | How often the server pings                                                                                    |
-| `WithPingTimeout(time.Duration)`                | `DefaultPingTimeout` (20s)    | How long to wait for a pong before closing                                                                    |
-| `WithUpgradeTimeout(time.Duration)`             | `DefaultUpgradeTimeout` (10s) | How long an upgrade probe may take                                                                            |
-| `WithMaxPayload(int)`                           | `DefaultMaxPayload` (1000000) | Maximum accepted POST body size, in bytes                                                                     |
-| `WithServerTransports(...TransportType)`        | `polling`, `websocket`        | Transports the server accepts                                                                                 |
-| `WithAllowUpgrades(bool)`                       | `true`                        | Advertise and accept transport upgrades                                                                       |
-| `WithCORS(CORSOptions)`                         | allow all origins             | Cross-origin policy (see below)                                                                               |
-| `WithGenerateID(func(r *http.Request) string)`  | 18 random base64url bytes     | Session identifier generator; receives the handshake request, so the id can be derived from a header or token |
-| `WithAllowRequest(func(r *http.Request) error)` | unset (allow all)             | Gate each handshake (auth, tokens, rate limit); a non-nil error rejects it with 403                           |
-| `WithCookie(CookieOptions)`                     | no cookie                     | Session-affinity cookie for sticky sessions behind a load balancer                                            |
-| `WithHTTPCompression(bool)`                     | `true`                        | gzip long-poll responses above a threshold when the client advertises it                                      |
+| Option                                          | Default                            | Purpose                                                                                                       |
+| ----------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `WithPingInterval(time.Duration)`               | `DefaultPingInterval` (25s)        | How often the server pings                                                                                    |
+| `WithPingTimeout(time.Duration)`                | `DefaultPingTimeout` (20s)         | How long to wait for a pong before closing                                                                    |
+| `WithUpgradeTimeout(time.Duration)`             | `DefaultUpgradeTimeout` (10s)      | How long an upgrade probe may take                                                                            |
+| `WithMaxPayload(int)`                           | `DefaultMaxPayload` (1000000)      | Maximum accepted POST body size, in bytes                                                                     |
+| `WithServerTransports(...TransportType)`        | `polling`, `websocket`             | Transports the server accepts                                                                                 |
+| `WithAllowUpgrades(bool)`                       | `true`                             | Advertise and accept transport upgrades                                                                       |
+| `WithCORS(CORSOptions)`                         | allow all origins                  | Cross-origin policy (see below)                                                                               |
+| `WithGenerateID(func(r *http.Request) string)`  | 18 random bytes, base64url-encoded | Session identifier generator; receives the handshake request, so the id can be derived from a header or token |
+| `WithAllowRequest(func(r *http.Request) error)` | unset (allow all)                  | Gate each handshake (auth, tokens, rate limit); a non-nil error rejects it with 403                           |
+| `WithCookie(CookieOptions)`                     | no cookie                          | Session-affinity cookie for sticky sessions behind a load balancer                                            |
+| `WithHTTPCompression(bool)`                     | `true`                             | gzip long-poll responses above a threshold when the client advertises it                                      |
 
 The server also exposes
 `OnConnectionError(func(r *http.Request, code ConnectionErrorCode, reason string))`,
-invoked whenever a connection is rejected before a session is established, for
-logging and alerting. `code` is one of the exported `ConnectionError*` constants
+invoked when a handshake is rejected by validation before a session is established
+(a failed allow-request gate, an unsupported protocol version, an unknown or
+disallowed transport, a bad handshake method, or an unknown polling session id).
+It is best-effort: a few low-level failures bypass it (an unknown-sid WebSocket
+upgrade, or a failure to build or send the open packet). `code` is one of the
+exported `ConnectionError*` constants
 (`ConnectionErrorUnknownTransport`, `ConnectionErrorUnknownSessionID`,
 `ConnectionErrorBadHandshakeMethod`, `ConnectionErrorBadRequest`,
 `ConnectionErrorForbidden`, `ConnectionErrorUnsupportedProtocolVersion`), so a

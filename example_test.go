@@ -46,8 +46,10 @@ func ExampleNewServer() {
 }
 
 // ExampleNewSocket builds an Engine.IO client, registers its handlers, and
-// opens it. Sends made before the socket opens are buffered and flushed once the
-// handshake completes.
+// opens it. Sends issued after Open() but before the handshake completes are
+// buffered and flushed once the socket opens; a send before Open() (while the
+// socket is still closed) is dropped. This example sends from OnOpen, after the
+// handshake has completed.
 func ExampleNewSocket() {
 	ctx := context.Background()
 

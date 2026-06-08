@@ -133,7 +133,9 @@ func (t *WebSocketTransport) beginOpen() (target string, header http.Header, cli
 	return t.url.String(), t.header, t.client, true
 }
 
-// Close sends a close packet and tears down the connection.
+// Close sends a best-effort close packet and tears down the connection. The close
+// packet is only written while the transport is open; a Close during the opening
+// window tears the connection down without sending one.
 func (t *WebSocketTransport) Close(ctx context.Context) {
 	t.mu.Lock()
 	if t.state != TransportStateOpening && t.state != TransportStateOpen {

@@ -33,9 +33,10 @@ func main() {
 		panic(err)
 	}
 
-	// 1. OnOpen fires once, after the handshake completes. It is the first point
-	// at which it is safe to start sending; writes made earlier are buffered until
-	// the socket opens.
+	// 1. OnOpen fires once, after the handshake completes. It is the first point at
+	// which a send is guaranteed to flush. A send issued after Open() while the
+	// socket is still opening is buffered and flushed here; a send made before
+	// Open() (while the socket is closed) is silently dropped.
 	client.OnOpen(func() {
 		fmt.Println("OnOpen: handshake complete, socket is open")
 		if err := client.Send(ctx, []engineio.Packet{

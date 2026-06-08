@@ -167,8 +167,8 @@ func WithCookie(cookie CookieOptions) ServerOption {
 }
 
 // WithHTTPCompression enables or disables gzip compression of long-poll response
-// bodies above an internal threshold when the client advertises Accept-Encoding.
-// Default: true, matching the reference server.
+// bodies whose size is at least an internal threshold, when the client advertises
+// gzip in its Accept-Encoding header. Default: true, matching the reference server.
 func WithHTTPCompression(httpCompression bool) ServerOption {
 	return func(c *serverConfig) {
 		c.httpCompression = httpCompression

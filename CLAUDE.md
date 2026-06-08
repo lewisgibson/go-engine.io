@@ -20,7 +20,7 @@ Run the relevant `Makefile` targets before opening a change:
 - `make test` -- fast unit tests (no race, no coverage).
 - `make unit-test` -- unit tests with the race detector and coverage.
 - `make interop` -- the JS interoperability suite (build-tagged `interop`,
-  needs Node.js; run `npm --prefix test/interop ci` first).
+  needs Node.js; the target runs `npm --prefix test/interop ci` for you).
 - `make vendor` -- tidy and re-vendor dependencies (`vendor/` is committed).
 
 ## Conventions
@@ -42,6 +42,8 @@ Run the relevant `Makefile` targets before opening a change:
 ## Layout
 
 - The root package `engineio` -- the client, server, and codec.
+- `internal/` -- implementation utilities not part of the public API (e.g. the
+  generic buffer `Pool` in `pool.go`).
 - `examples/` -- runnable example programs (a separate module).
 - `test/interop/` -- build-tagged interoperability tests against the reference
   JavaScript Engine.IO.

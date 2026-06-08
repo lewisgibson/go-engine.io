@@ -55,8 +55,9 @@ func main() {
 		}
 	})
 
-	// Once the handshake completes, greet the server. Sending before this point
-	// would simply buffer until the socket opens.
+	// Once the handshake completes, greet the server. A Send issued after Open() but
+	// before the handshake completes is buffered and flushed here; a Send made before
+	// Open() (while the socket is still closed) is silently dropped.
 	client.OnOpen(func() {
 		if err := client.Send(ctx, []engineio.Packet{
 			{Type: engineio.PacketMessage, Data: []byte("Hello")},

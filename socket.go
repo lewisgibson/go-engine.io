@@ -47,8 +47,9 @@ type SocketOpenHandler func()
 
 // SocketCloseHandler is invoked once when the socket closes. The reason is a
 // short human-readable description and the cause is the underlying error that
-// triggered the close, or nil for a graceful close, so the application can log
-// or branch on why the connection ended. It runs on a transport goroutine.
+// triggered the close, or nil when no error was involved -- both a graceful close
+// and a ping timeout pass a nil cause, so branch on the reason, not on whether
+// cause is nil. It runs on a transport goroutine.
 type SocketCloseHandler func(reason string, cause error)
 
 // SocketPacketHandler is invoked for every packet the socket receives, including
@@ -64,8 +65,10 @@ type SocketMessageHandler func(data []byte, isBinary bool)
 
 // SocketErrorHandler is invoked when the socket encounters an error, such as a
 // transport failure or a malformed packet. An error does not always close the
-// socket; e.g. a failed probe is reported here but leaves the current transport
-// running. It runs on a transport goroutine and must not block.
+// socket: a failed upgrade probe is non-fatal and leaves the current transport
+// running. A probe failure is delivered to the upgrade-error handler when one is
+// set (see OnUpgradeError) and only falls back to this handler otherwise. It runs
+// on a transport goroutine and must not block.
 type SocketErrorHandler func(error)
 
 // SocketUpgradeHandler is invoked when the socket finishes upgrading to a new

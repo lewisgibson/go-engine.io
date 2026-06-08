@@ -33,11 +33,13 @@ type Server struct {
 	onConnectionError ServerConnectionErrorHandler
 }
 
-// ServerConnectionErrorHandler is called when a connection is rejected before a
-// session is established. code is the Engine.IO error code (one of the
-// ConnectionError* constants) and reason is the human-readable message (for an
-// allowRequest rejection it is that error's message), so an operator can log or
-// alert on refused connections and branch on why they were refused.
+// ServerConnectionErrorHandler is called when a handshake is rejected by
+// validation before a session is established. code is the Engine.IO error code
+// (one of the ConnectionError* constants) and reason is the human-readable
+// message (for an allowRequest rejection it is that error's message), so an
+// operator can log or alert on refused connections and branch on why. It is
+// best-effort: a few low-level failures (an unknown-sid WebSocket upgrade, an
+// open-packet build or send failure) tear the connection down without invoking it.
 type ServerConnectionErrorHandler func(r *http.Request, code ConnectionErrorCode, reason string)
 
 // NewServer creates a Server, applying the options over the defaults (see the

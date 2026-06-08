@@ -19,10 +19,13 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	// Restrict access to a single browser origin and allow credentials, so the
-	// browser may send cookies. With AllowCredentials the server echoes the
-	// request origin rather than replying with "*", as the CORS spec requires.
-	// An empty AllowedOrigins (or a single "*") would instead allow every origin.
+	// Restrict access to a single browser origin and allow credentials so the
+	// browser may send cookies. Because AllowedOrigins names a concrete origin, the
+	// server echoes that origin in Access-Control-Allow-Origin when the request
+	// matches (it never replies "*" here); AllowCredentials additionally sets
+	// Access-Control-Allow-Credentials: true. The echo-instead-of-"*" rule only
+	// matters for an allow-all policy: an empty AllowedOrigins (or a single "*")
+	// allows every origin.
 	server := engineio.NewServer(
 		engineio.WithCORS(engineio.CORSOptions{
 			AllowCredentials: true,

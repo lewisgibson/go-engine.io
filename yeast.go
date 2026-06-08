@@ -32,8 +32,9 @@ type yeastGenerator struct {
 	previousMillis int64
 }
 
-// defaultYeast is the package-wide generator shared by every polling transport,
-// so values stay unique even across distinct transports in the same process.
+// defaultYeast is the process-wide generator shared by every client polling
+// transport, so the cache-busting query values stay unique even across distinct
+// client transports in the same process.
 var defaultYeast = &yeastGenerator{}
 
 // yeastEncode encodes a non-negative integer in the 64-character yeast alphabet,
