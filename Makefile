@@ -45,9 +45,11 @@ test: ## Run unit tests without coverage or race detector
 	@go test -trimpath $$(go list -tags=!interop -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)
 
 .PHONY: unit-test
-unit-test: ## Run unit tests
+unit-test: ## Run unit tests with the race detector, coverage, and a JUnit report
+	@command -v gotestsum >/dev/null 2>&1 || go install gotest.tools/gotestsum@v1.13.0
 	@mkdir -p coverage
-	@go test -trimpath -race -count=1 -covermode=atomic \
+	@gotestsum --junitfile coverage/unit.xml --format pkgname -- \
+		-trimpath -race -count=1 -covermode=atomic \
 		-coverprofile=coverage/unit.cov \
 		$$(go list -tags=!interop -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...)
 

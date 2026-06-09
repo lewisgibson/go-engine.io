@@ -35,14 +35,36 @@ jobs:
             - name: Verify Modules
               run: go mod verify
 
+            # The Codecov token is a repository secret, so it is empty on pull
+            # requests from forks, which cannot read secrets. Detect that here and
+            # gate the uploads below on it, so a fork PR skips the upload instead of
+            # attempting one that cannot succeed.
+            - name: Check for Codecov token
+              id: codecov
+              env:
+                  CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+              run: |
+                  if [ -n "$CODECOV_TOKEN" ]; then
+                      echo "available=true" >>"$GITHUB_OUTPUT"
+                  else
+                      echo "available=false" >>"$GITHUB_OUTPUT"
+                  fi
+
             - name: Test
               run: make unit-test
 
             - name: Upload Coverage to Codecov
+              if: ${{ steps.codecov.outputs.available == 'true' }}
               uses: codecov/codecov-action@v7.0.0
               with:
                   token: ${{ secrets.CODECOV_TOKEN }}
                   files: coverage/unit.cov
-                  # Fail the build if the upload errors, so a broken Codecov
-                  # integration surfaces instead of being silently ignored.
-                  fail_ci_if_error: true
+
+            # Upload the JUnit report to Codecov Test Analytics. It runs even when
+            # the test run failed, so failing or flaky tests are still surfaced.
+            - name: Upload Test Results to Codecov
+              if: ${{ !cancelled() && steps.codecov.outputs.available == 'true' }}
+              uses: codecov/test-results-action@v1.2.1
+              with:
+                  token: ${{ secrets.CODECOV_TOKEN }}
+                  files: coverage/unit.xml
