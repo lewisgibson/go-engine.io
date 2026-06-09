@@ -232,13 +232,34 @@ func (s *Server) Socket(id string) (*ServerSocket, bool) {
 	return nil, false
 }
 
-// ServeHTTP implements http.Handler. It applies CORS, rejects any protocol
-// version other than v4 and any disabled transport, then dispatches the request
-// to the polling or websocket handler. Errors are written as Engine.IO JSON
-// error bodies.
+// webTransportProtocol is the :protocol value of a WebTransport Extended CONNECT,
+// surfaced on the request's Proto field. It identifies a WebTransport session
+// request, which carries no EIO query to route on.
+const webTransportProtocol = "webtransport"
+
+// ServeHTTP implements http.Handler. It applies CORS, routes a WebTransport
+// Extended CONNECT to the HTTP/3 upgrader, then for the HTTP transports rejects
+// any protocol version other than v4 and any disabled transport before dispatching
+// to the polling or websocket handler. Errors are written as Engine.IO JSON error
+// bodies.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// CORS runs before validation so a preflight never fails on a missing sid.
 	if s.applyCORS(w, r) {
+		return
+	}
+
+	// WebTransport arrives as an Extended CONNECT (its :protocol is surfaced on
+	// r.Proto) and carries no EIO query, since the session is identified by the
+	// first packet on its stream. Route it by that signature before the query
+	// validation the polling and websocket transports rely on. It is serveable only
+	// when it is an enabled transport and WithWebTransportServer wired an HTTP/3
+	// upgrader; otherwise it is unknown.
+	if r.Method == http.MethodConnect && r.Proto == webTransportProtocol {
+		if s.options.webTransportUpgrade == nil || !s.options.allowsTransport(TransportTypeWebTransport) {
+			s.rejectConnection(w, r, ConnectionErrorUnknownTransport, ConnectionErrorUnknownTransport.message())
+			return
+		}
+		s.options.webTransportUpgrade(s, w, r)
 		return
 	}
 
@@ -639,10 +660,9 @@ func (c ConnectionErrorCode) message() string {
 
 	case ConnectionErrorUnsupportedProtocolVersion:
 		return "Unsupported protocol version"
-
-	default:
-		return "Bad request"
 	}
+
+	return "Bad request"
 }
 
 // status returns the HTTP status code for the error.

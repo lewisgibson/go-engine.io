@@ -40,6 +40,16 @@ type serverTransport interface {
 	close()
 }
 
+// promotableTransport is a probing transport that can be promoted to the
+// session's active transport once its upgrade handshake completes. Both the
+// websocket and webtransport server transports implement it, so the upgrade
+// machinery is transport-agnostic.
+type promotableTransport interface {
+	serverTransport
+	// promote ends the probing state so subsequent packets dispatch to the session.
+	promote()
+}
+
 // ServerConnectionHandler is invoked once for each new session, after the open
 // packet has been sent. It is where the application installs the session's
 // message and close handlers and may begin sending. It must not block, since on
@@ -414,8 +424,8 @@ func (s *ServerSocket) stopTimersLocked() {
 	}
 }
 
-// startUpgrade begins probing an upgrade to the given websocket transport while
-// the polling transport keeps running. It reports whether the probe may proceed.
+// startUpgrade begins probing an upgrade to the given transport while the polling
+// transport keeps running. It reports whether the probe may proceed.
 func (s *ServerSocket) startUpgrade(transport serverTransport) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -475,9 +485,9 @@ func (s *ServerSocket) flushProbeNoop() {
 	}
 }
 
-// completeUpgrade promotes the probing websocket transport to the active
-// transport and discards the polling transport.
-func (s *ServerSocket) completeUpgrade(transport *serverWebSocketTransport) {
+// completeUpgrade promotes the probing transport to the active transport and
+// discards the polling transport.
+func (s *ServerSocket) completeUpgrade(transport promotableTransport) {
 	old, stop, ok := s.beginCompleteUpgrade(transport)
 	if !ok {
 		return
@@ -494,12 +504,12 @@ func (s *ServerSocket) completeUpgrade(transport *serverWebSocketTransport) {
 	s.flush()
 }
 
-// beginCompleteUpgrade swaps the probing websocket transport in as the active
-// transport and snapshots the polling transport to discard and the probe-noop
-// stop channel under a single lock, so completeUpgrade can promote, close, and
-// flush without touching the mutex. It reports false when the probe no longer
-// matches the in-flight upgrade.
-func (s *ServerSocket) beginCompleteUpgrade(transport *serverWebSocketTransport) (old serverTransport, stop chan struct{}, ok bool) {
+// beginCompleteUpgrade swaps the probing transport in as the active transport and
+// snapshots the polling transport to discard and the probe-noop stop channel
+// under a single lock, so completeUpgrade can promote, close, and flush without
+// touching the mutex. It reports false when the probe no longer matches the
+// in-flight upgrade.
+func (s *ServerSocket) beginCompleteUpgrade(transport promotableTransport) (old serverTransport, stop chan struct{}, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

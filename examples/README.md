@@ -41,3 +41,4 @@ Pair a server example with a client example by running each in its own terminal.
 ## Server and client together
 
 - [binary/](binary/) -- a server and a client in one process exchanging binary messages with the `isBinary` flag preserved.
+- [webtransport/](webtransport/) -- a server and a client in one process talking over the WebTransport (HTTP/3) transport, with a throwaway self-signed certificate.

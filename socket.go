@@ -93,6 +93,10 @@ type socketConfig struct {
 	rememberUpgrade  bool
 	transports       []TransportType
 	tryAllTransports bool
+	// webTransportConstructor builds the WebTransport transport. It is nil unless
+	// WithWebTransportDialer is set; storing a constructor closure that captures the
+	// dialer keeps the webtransport-go import out of this file.
+	webTransportConstructor TransportConstructor
 }
 
 // SocketOption configures a Socket.
@@ -191,9 +195,12 @@ type Socket struct {
 	// maxPayload is the maximum payload size in bytes, from the handshake.
 	maxPayload int
 
-	state               SocketState
-	transport           Transport
-	priorUpgradeSuccess bool
+	state     SocketState
+	transport Transport
+	// priorUpgrade is the transport a prior upgrade succeeded onto (websocket or
+	// webtransport), or "" if none; with rememberUpgrade the next open starts on it
+	// instead of polling.
+	priorUpgrade TransportType
 	// pingTimeoutTimer closes the transport if the server goes silent.
 	pingTimeoutTimer *time.Timer
 	// baseCtx is the caller's context from Open. Each connection attempt derives
@@ -241,6 +248,14 @@ func NewSocket(serverURL string, options ...SocketOption) (*Socket, error) {
 		option(&config)
 	}
 
+	// Snapshot the registry, then add the WebTransport constructor for this socket
+	// only when WithWebTransportDialer supplied a dialer, since WebTransport cannot
+	// be built from the registry's URL/client/header signature alone.
+	constructors := maps.Clone(Transports)
+	if config.webTransportConstructor != nil {
+		constructors[TransportTypeWebTransport] = config.webTransportConstructor
+	}
+
 	return &Socket{
 		url:                   target,
 		client:                config.client,
@@ -248,7 +263,7 @@ func NewSocket(serverURL string, options ...SocketOption) (*Socket, error) {
 		upgrade:               config.upgrade,
 		rememberUpgrade:       config.rememberUpgrade,
 		tryAllTransports:      config.tryAllTransports,
-		transportConstructors: maps.Clone(Transports),
+		transportConstructors: constructors,
 
 		transports: config.transports,
 		state:      SocketStateClosed,
@@ -273,8 +288,10 @@ func (s *Socket) Open(ctx context.Context) {
 		s.state = SocketStateClosed
 		s.mu.Unlock()
 
+		// Report the real failure (no transports, an unregistered transport, or a
+		// constructor error) rather than flattening every case to ErrNoTransports.
 		if handler := s.errorHandler(); handler != nil {
-			handler(ErrNoTransports)
+			handler(err)
 		}
 		return
 	}
@@ -353,7 +370,25 @@ func (s *Socket) createTransport() (Transport, error) {
 
 	// Construct it from the per-socket constructor snapshot, so a caller mutating
 	// the global Transports registry cannot race an open in progress.
-	return s.transportConstructors[transportType](target, client, header)
+	constructor, err := s.constructorFor(transportType)
+	if err != nil {
+		return nil, err
+	}
+
+	return constructor(target, client, header)
+}
+
+// constructorFor returns the constructor registered for the transport, or an error
+// naming it when none is registered (for example webtransport configured without
+// WithWebTransportDialer), so a missing constructor is reported rather than
+// dereferenced as a nil function.
+func (s *Socket) constructorFor(transportType TransportType) (TransportConstructor, error) {
+	constructor, ok := s.transportConstructors[transportType]
+	if !ok {
+		return nil, fmt.Errorf("transport %q is not registered", transportType)
+	}
+
+	return constructor, nil
 }
 
 // selectTransport chooses the transport kind to open with and snapshots the
@@ -368,11 +403,11 @@ func (s *Socket) selectTransport() (transportType TransportType, client Transpor
 		return "", nil, nil, false
 	}
 
-	// The first transport in the list is used, unless a prior upgrade succeeded, in
-	// which case the WebSocket transport is used directly.
+	// The first transport in the list is used, unless a prior upgrade is remembered,
+	// in which case that transport is used directly.
 	transportType = s.transports[0]
-	if s.rememberUpgrade && s.priorUpgradeSuccess && slices.Contains(s.transports, TransportTypeWebSocket) {
-		transportType = TransportTypeWebSocket
+	if s.rememberUpgrade && s.priorUpgrade != "" && slices.Contains(s.transports, s.priorUpgrade) {
+		transportType = s.priorUpgrade
 	}
 
 	return transportType, s.client, s.header, true
@@ -625,8 +660,9 @@ func (s *Socket) beginRetry() (retry bool, transport Transport, baseCtx context.
 	defer s.mu.Unlock()
 
 	// A transport error clears any remembered upgrade, so the retry restarts from
-	// the configured transport list rather than jumping straight onto WebSocket.
-	s.priorUpgradeSuccess = false
+	// the configured transport list rather than jumping straight onto the upgraded
+	// transport.
+	s.priorUpgrade = ""
 
 	// Fall back to the next transport only when configured to try them all, another
 	// transport remains to try, and we are still opening -- a settled session must
@@ -830,7 +866,11 @@ func (s *Socket) recordOpen(p OpenPacket) (transport Transport, upgrade bool, tr
 	transport = s.transport
 	upgrade = s.upgrade
 	transports = slices.Clone(s.transports)
-	s.priorUpgradeSuccess = transport != nil && transport.Type() == TransportTypeWebSocket
+	if transport != nil && transport.Type() != TransportTypePolling {
+		s.priorUpgrade = transport.Type()
+	} else {
+		s.priorUpgrade = ""
+	}
 
 	return transport, upgrade, transports
 }
@@ -869,7 +909,12 @@ func (s *Socket) probe(ctx context.Context, upgradeTransportType TransportType) 
 		return fmt.Errorf("resolving URL: %w", err)
 	}
 
-	transport, err := s.transportConstructors[upgradeTransportType](target, client, header)
+	constructor, err := s.constructorFor(upgradeTransportType)
+	if err != nil {
+		return err
+	}
+
+	transport, err := constructor(target, client, header)
 	if err != nil {
 		return fmt.Errorf("creating transport: %w", err)
 	}
@@ -976,7 +1021,7 @@ func (s *Socket) probe(ctx context.Context, upgradeTransportType TransportType) 
 			discardProbe(errors.New("socket closed during upgrade"))
 			return
 		}
-		s.priorUpgradeSuccess = transport.Type() == TransportTypeWebSocket
+		s.priorUpgrade = transport.Type()
 		s.transport = transport
 		s.upgrading = false
 		s.mu.Unlock()
@@ -1035,7 +1080,7 @@ func (s *Socket) beginProbe() (client TransportClient, header http.Header) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.priorUpgradeSuccess = false
+	s.priorUpgrade = ""
 
 	return s.client, s.header
 }

@@ -12,7 +12,8 @@ A Go implementation of the [Engine.IO](https://socket.io/docs/v4/engine-io-proto
 - ✅ **Server**: A `Server` that is a plain `http.Handler`, mountable in any router
 - ✅ **HTTP Long-Polling Transport**: The baseline transport that works everywhere
 - ✅ **WebSocket Transport**: A full-duplex transport for low-latency messaging
-- ✅ **Automatic Transport Upgrade**: Background probe that upgrades long-polling to WebSocket
+- ✅ **WebTransport Transport**: An HTTP/3 transport for client and server, built on `quic-go`
+- ✅ **Automatic Transport Upgrade**: Background probe that upgrades long-polling to WebSocket or WebTransport
 - ✅ **Binary Support**: Round-trip binary messages without downgrading them to text
 - ✅ **Version-Aware Decoding**: Decodes v2, v3, and v4 long-polling payload framings
 - ✅ **Heartbeat**: Server-initiated v4 ping/pong with timeout detection
@@ -288,7 +289,7 @@ r.Handle("/engine.io/*", server)
 
 ## Transports
 
-Engine.IO defines two transports, both implemented here:
+Engine.IO defines three transports, all implemented here:
 
 - **HTTP long-polling** (`TransportTypePolling`): the baseline. The client issues
   a long-lived `GET` that the server holds open until it has data to deliver, and
@@ -297,13 +298,84 @@ Engine.IO defines two transports, both implemented here:
 - **WebSocket** (`TransportTypeWebSocket`): a full-duplex connection that carries
   packets as individual frames with no per-message HTTP overhead, including native
   binary frames.
+- **WebTransport** (`TransportTypeWebTransport`): a full-duplex connection over
+  HTTP/3 (QUIC). It carries each packet as a length-framed message on a single
+  bidirectional stream, with native binary support. Because it runs over UDP and
+  always uses TLS, it needs its own HTTP/3 listener alongside the TCP one.
 
 A session starts on long-polling and, with upgrades enabled, the client probes
-for WebSocket in the background: it opens a second transport, sends a `ping`
-with the `"probe"` payload, and on the matching `pong` commits the switch with an
-`upgrade` packet. Writes are buffered across the switch so nothing is lost or
-reordered. Upgrades are on by default; disable them with `WithUpgrade(false)` on
-the client or `WithAllowUpgrades(false)` on the server.
+for a better transport in the background: it opens a second transport, sends a
+`ping` with the `"probe"` payload, and on the matching `pong` commits the switch
+with an `upgrade` packet. Writes are buffered across the switch so nothing is lost
+or reordered. Upgrades are on by default; disable them with `WithUpgrade(false)`
+on the client or `WithAllowUpgrades(false)` on the server.
+
+### WebTransport
+
+WebTransport is opt-in. It pulls in [`quic-go`](https://github.com/quic-go/quic-go)
+and [`webtransport-go`](https://github.com/quic-go/webtransport-go), and it needs
+an HTTP/3 listener you create and run yourself. The same `Server` handler serves
+polling and WebSocket over TCP and WebTransport over UDP.
+
+On the server, build a `*webtransport.Server`, pass it with
+`WithWebTransportServer`, list `TransportTypeWebTransport` among the accepted
+transports, and run the HTTP/3 listener on the same handler the TCP server uses.
+`WithWebTransportServer` configures the HTTP/3 server for WebTransport for you (it
+calls `webtransport.ConfigureHTTP3Server`), so you do not have to:
+
+```go
+import (
+	"github.com/quic-go/quic-go/http3"
+	"github.com/quic-go/webtransport-go"
+)
+
+mux := http.NewServeMux()
+wt := &webtransport.Server{
+	H3: &http3.Server{Addr: ":443", Handler: mux, EnableDatagrams: true},
+	// A nil CheckOrigin only permits same-origin requests; screen your own origins
+	// here (this is where cross-origin browser sessions are allowed or rejected).
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+server := engineio.NewServer(
+	engineio.WithServerTransports(
+		engineio.TransportTypePolling,
+		engineio.TransportTypeWebSocket,
+		engineio.TransportTypeWebTransport,
+	),
+	engineio.WithWebTransportServer(wt),
+)
+mux.Handle("/engine.io/", server)
+
+go http.ListenAndServeTLS(":443", "cert.pem", "key.pem", mux) // polling + websocket (TCP)
+go wt.ListenAndServeTLS("cert.pem", "key.pem")                // webtransport (UDP / HTTP3)
+```
+
+On the client, supply a `*webtransport.Dialer` (which carries the TLS and QUIC
+configuration) with `WithWebTransportDialer`, and list WebTransport among the
+transports to try:
+
+```go
+client, err := engineio.NewSocket("https://example.com:443/engine.io/",
+	engineio.WithTransports(
+		engineio.TransportTypePolling,
+		engineio.TransportTypeWebTransport,
+	),
+	engineio.WithWebTransportDialer(&webtransport.Dialer{}),
+)
+```
+
+A few notes:
+
+- WebTransport is advertised as an upgrade target only when `WithWebTransportServer`
+  is set, so a misconfigured server never sends clients probing a transport it
+  cannot serve.
+- The allow-request gate (`WithAllowRequest`) runs for a fresh WebTransport session
+  but not for an upgrade, matching the other transports. Because WebTransport
+  bypasses the HTTP layer, cross-origin requests are screened by the
+  `*webtransport.Server`'s `CheckOrigin`, not by `WithCORS`.
+- A client URL may use `http://` or `https://`; the WebTransport transport always
+  dials over `https://`.
 
 ## Compatibility
 
@@ -326,7 +398,12 @@ Interoperability with the reference JavaScript implementation is verified by the
 build-tagged tests in [`test/interop`](test/interop): the Go client is driven
 against the canonical `engine.io` server, and the Go server against the canonical
 `engine.io-client`, exercising the handshake, long-polling, the WebSocket
-upgrade, binary messages, and the heartbeat. Run them with Node.js installed:
+upgrade, binary messages, and the heartbeat. WebTransport is verified separately,
+by Go-to-Go round-trip tests over a real QUIC connection, and its round trip has
+additionally been confirmed against a real browser (Chrome's native WebTransport);
+it is not part of this Node.js suite because the only Node.js WebTransport
+implementation does not interoperate with `quic-go` at the QUIC layer. Run the
+suite with Node.js installed:
 
 ```sh
 make interop
@@ -399,7 +476,7 @@ fmt.Printf("decoded %d packets\n", len(decoded))
 - `Server` - the Engine.IO v4 server (`http.Handler`); created with `NewServer`.
 - `ServerSocket` - a single connected server session, handed to `OnConnection`.
 - `Transport` / `TransportType` - the transport interface and its kinds
-  (`TransportTypePolling`, `TransportTypeWebSocket`).
+  (`TransportTypePolling`, `TransportTypeWebSocket`, `TransportTypeWebTransport`).
 - `Packet` / `PacketType` - a protocol packet and its type constants.
 - `OpenPacket` - the JSON payload of the handshake `open` packet.
 - `CORSOptions` - the server's cross-origin configuration.
@@ -430,6 +507,8 @@ fmt.Printf("decoded %d packets\n", len(decoded))
 - `ErrUnsupportedProtocolVersion` - decoding was requested for a version the
   codec does not understand.
 - `ErrURLRequired` - a transport constructor was called with a nil URL.
+- `ErrWebTransportDialerRequired` - a WebTransport transport was constructed
+  without a `*webtransport.Dialer`.
 - `ErrTransportRoundTripperClientRequired` - a `TransportRoundTripper` was used
   without a `Client`.
 - `ErrUnexpectedStatus` - a polling transport request returned a non-200 HTTP

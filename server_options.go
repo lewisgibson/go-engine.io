@@ -16,7 +16,8 @@ const (
 	DefaultPingTimeout = 20 * time.Second
 	// DefaultUpgradeTimeout is how long a transport upgrade probe may take.
 	DefaultUpgradeTimeout = 10 * time.Second
-	// DefaultMaxPayload is the maximum accepted POST body size, in bytes.
+	// DefaultMaxPayload is the maximum accepted POST body size, in bytes. It also
+	// bounds a single inbound WebTransport frame.
 	DefaultMaxPayload = 1_000_000
 )
 
@@ -47,6 +48,10 @@ type serverConfig struct {
 	allowRequest    func(r *http.Request) error
 	cookie          *CookieOptions
 	httpCompression bool
+	// webTransportUpgrade serves a WebTransport request. It is nil unless
+	// WithWebTransportServer is set; storing it as a closure keeps the webtransport-go
+	// import out of this file and server.go.
+	webTransportUpgrade func(s *Server, w http.ResponseWriter, r *http.Request)
 }
 
 // CookieOptions configures the session-affinity cookie set on the handshake
@@ -93,8 +98,11 @@ func WithUpgradeTimeout(upgradeTimeout time.Duration) ServerOption {
 	}
 }
 
-// WithMaxPayload sets the maximum accepted POST body size in bytes; a larger
-// body is rejected with HTTP 413. Default: 1_000_000.
+// WithMaxPayload sets the maximum accepted POST body size in bytes; a larger body
+// is rejected with HTTP 413. The same limit bounds a single inbound WebTransport
+// frame, which is rejected as a parse error (not an HTTP status) when it exceeds
+// it; a non-positive value still bounds a WebTransport frame at an internal 16 MiB
+// ceiling, so a read can never be left unbounded. Default: 1_000_000.
 func WithMaxPayload(maxPayload int) ServerOption {
 	return func(c *serverConfig) {
 		c.maxPayload = maxPayload
