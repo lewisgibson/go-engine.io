@@ -76,10 +76,10 @@ func DecodePayload(version ProtocolVersion, input []byte) ([]Packet, error) {
 
 	case ProtocolVersion2:
 		return decodeStringFramedPayload(input)
-
-	default:
-		return nil, fmt.Errorf("%w: %d", ErrUnsupportedProtocolVersion, version)
 	}
+
+	// Any other version is one the codec does not understand.
+	return nil, fmt.Errorf("%w: %d", ErrUnsupportedProtocolVersion, version)
 }
 
 // decodeRecordSeparatorPayload decodes a v4 payload by splitting on the record

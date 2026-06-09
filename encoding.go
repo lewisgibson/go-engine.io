@@ -51,12 +51,14 @@ func DecodePacket(input []byte) (Packet, error) {
 			return Packet{}, fmt.Errorf("decoding base64: %w", err)
 		}
 		return Packet{Type: PacketMessage, Data: data, IsBinary: true}, nil
-
-	default:
-		var packetType = PacketTypeFromByte(input[0])
-		if !packetType.valid() {
-			return Packet{}, fmt.Errorf("%w: %q", ErrInvalidPacketType, input[0])
-		}
-		return Packet{Type: packetType, Data: input[1:]}, nil
 	}
+
+	// With no binary marker, the first byte is the packet type and the remainder is
+	// the data.
+	var packetType = PacketTypeFromByte(input[0])
+	if !packetType.valid() {
+		return Packet{}, fmt.Errorf("%w: %q", ErrInvalidPacketType, input[0])
+	}
+
+	return Packet{Type: packetType, Data: input[1:]}, nil
 }

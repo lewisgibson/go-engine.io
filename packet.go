@@ -104,10 +104,9 @@ func (p PacketType) String() string {
 
 	case PacketNoop:
 		return "noop"
-
-	default:
-		return "unknown"
 	}
+
+	return "unknown"
 }
 
 // Byte returns the single ASCII digit that encodes the packet type on the wire
