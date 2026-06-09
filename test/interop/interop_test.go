@@ -40,6 +40,7 @@ var interopPayloads = []struct {
 	{name: "empty_text", data: []byte(""), isBinary: false},
 	{name: "multibyte_text", data: []byte("h\u00e9llo \u4e16\u754c \u20ac"), isBinary: false},
 	{name: "binary", data: []byte{0x00, 0x01, 0x02, 0xfe, 0xff}, isBinary: true},
+	{name: "empty_binary", data: []byte{}, isBinary: true},
 	{name: "large_text", data: []byte(strings.Repeat("x", 32*1024)), isBinary: false},
 	{name: "large_binary", data: bytes.Repeat([]byte{0xab, 0xcd}, 16*1024), isBinary: true},
 }
