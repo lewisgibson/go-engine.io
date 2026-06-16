@@ -37,9 +37,20 @@ var quicConnKey = quicConnKeyType{}
 
 func ConfigureHTTP3Server(s *http3.Server) {
 	if s.AdditionalSettings == nil {
-		s.AdditionalSettings = make(map[uint64]uint64, 1)
+		s.AdditionalSettings = make(map[uint64]uint64, 6)
 	}
-	s.AdditionalSettings[settingsEnableWebtransport] = 1
+	// send the old setting for backwards compatibility with older clients
+	s.AdditionalSettings[settingsEnableWebtransportDraft06] = 1
+	s.AdditionalSettings[settingsWebTransportEnabled] = 1
+
+	// Safari requires SETTINGS_WT_MAX_SESSIONS >= 1 (draft-ietf-webtrans-http3-14)
+	s.AdditionalSettings[settingsWebTransportMaxSessions] = 1<<62 - 1
+
+	// Required when SETTINGS_WT_MAX_SESSIONS > 1
+	s.AdditionalSettings[settingsWebTransportInitialMaxStreamsUni] = 1 << 60
+	s.AdditionalSettings[settingsWebTransportInitialMaxStreamsBidi] = 1 << 60
+	s.AdditionalSettings[settingsWebTransportInitialMaxData] = 1 << 60
+
 	s.EnableDatagrams = true
 	origConnContext := s.ConnContext
 	s.ConnContext = func(ctx context.Context, conn *quic.Conn) context.Context {
@@ -55,7 +66,7 @@ type Server struct {
 	H3 *http3.Server
 
 	// ApplicationProtocols is a list of application protocols that can be negotiated,
-	// see section 3.3 of https://www.ietf.org/archive/id/draft-ietf-webtrans-http3-14 for details.
+	// see section 3.3 of https://www.ietf.org/archive/id/draft-ietf-webtrans-http3-15 for details.
 	ApplicationProtocols []string
 
 	// ReorderingTimeout is the maximum time an incoming WebTransport stream that cannot be associated
@@ -112,6 +123,14 @@ func (s *Server) Serve(conn net.PacketConn) error {
 	if err := s.initialize(); err != nil {
 		return err
 	}
+
+	s.refCount.Add(1)
+	defer s.refCount.Done()
+
+	return s.serve(conn)
+}
+
+func (s *Server) serve(conn net.PacketConn) error {
 	var quicConf *quic.Config
 	if s.H3.QUICConfig != nil {
 		quicConf = s.H3.QUICConfig.Clone()
@@ -131,14 +150,11 @@ func (s *Server) Serve(conn net.PacketConn) error {
 		if err != nil {
 			return err
 		}
-		s.refCount.Add(1)
-		go func() {
-			defer s.refCount.Done()
-
+		s.refCount.Go(func() {
 			if err := s.ServeQUICConn(qconn); err != nil {
 				log.Printf("http3: error serving QUIC connection: %v", err)
 			}
-		}()
+		})
 	}
 }
 
@@ -197,10 +213,7 @@ func (s *Server) ServeQUICConn(conn *quic.Conn) error {
 				return
 			}
 
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-
+			wg.Go(func() {
 				typ, err := quicvarint.Peek(str)
 				if err != nil {
 					return
@@ -220,8 +233,12 @@ func (s *Server) ServeQUICConn(conn *quic.Conn) error {
 					str.CancelWrite(quic.StreamErrorCode(http3.ErrCodeGeneralProtocolError))
 					return
 				}
+				if !isValidSessionID(id) {
+					conn.CloseWithError(quic.ApplicationErrorCode(http3.ErrCodeIDError), "")
+					return
+				}
 				sessMgr.AddStream(str, sessionID(id))
-			}()
+			})
 		}
 	}()
 
@@ -234,10 +251,7 @@ func (s *Server) ServeQUICConn(conn *quic.Conn) error {
 				return
 			}
 
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-
+			wg.Go(func() {
 				typ, err := quicvarint.Peek(str)
 				if err != nil {
 					return
@@ -257,8 +271,12 @@ func (s *Server) ServeQUICConn(conn *quic.Conn) error {
 					str.CancelRead(quic.StreamErrorCode(http3.ErrCodeGeneralProtocolError))
 					return
 				}
+				if !isValidSessionID(id) {
+					conn.CloseWithError(quic.ApplicationErrorCode(http3.ErrCodeIDError), "")
+					return
+				}
 				sessMgr.AddUniStream(str, sessionID(id))
-			}()
+			})
 		}
 	}()
 
@@ -267,6 +285,12 @@ func (s *Server) ServeQUICConn(conn *quic.Conn) error {
 }
 
 func (s *Server) ListenAndServe() error {
+	if err := s.initialize(); err != nil {
+		return err
+	}
+	s.refCount.Add(1)
+	defer s.refCount.Done()
+
 	addr := s.H3.Addr
 	if addr == "" {
 		addr = ":https"
@@ -279,7 +303,9 @@ func (s *Server) ListenAndServe() error {
 	if err != nil {
 		return err
 	}
-	return s.Serve(conn)
+	defer conn.Close()
+
+	return s.serve(conn)
 }
 
 func (s *Server) ListenAndServeTLS(certFile, keyFile string) error {
@@ -324,7 +350,7 @@ func (s *Server) Upgrade(w http.ResponseWriter, r *http.Request) (*Session, erro
 	if r.Method != http.MethodConnect {
 		return nil, fmt.Errorf("expected CONNECT request, got %s", r.Method)
 	}
-	if r.Proto != protocolHeader {
+	if !isWebTransportProtocol(r.Proto) {
 		return nil, fmt.Errorf("unexpected protocol: %s", r.Proto)
 	}
 	if !s.CheckOrigin(r) {
