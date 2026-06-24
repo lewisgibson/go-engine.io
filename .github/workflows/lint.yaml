@@ -24,10 +24,10 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - name: Checkout Repository
-              uses: actions/checkout@v6.0.3
+              uses: actions/checkout@v7.0.0
 
             - name: Setup Go
-              uses: actions/setup-go@v6.4.0
+              uses: actions/setup-go@v6.5.0
               with:
                   go-version-file: ./go.mod
                   cache: true
@@ -42,7 +42,7 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - name: Checkout Repository
-              uses: actions/checkout@v6.0.3
+              uses: actions/checkout@v7.0.0
 
             - name: Register Problem Matcher
               run: |
@@ -63,7 +63,7 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - name: Checkout Repository
-              uses: actions/checkout@v6.0.3
+              uses: actions/checkout@v7.0.0
 
             - name: Setup Node.js
               uses: actions/setup-node@v6.4.0
@@ -81,7 +81,7 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - name: Checkout Repository
-              uses: actions/checkout@v6.0.3
+              uses: actions/checkout@v7.0.0
 
             - name: Install Shellcheck
               env:
