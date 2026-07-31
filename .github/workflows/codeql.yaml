@@ -30,21 +30,21 @@ jobs:
         runs-on: ubuntu-latest
         steps:
             - name: Checkout Repository
-              uses: actions/checkout@v6.0.3
+              uses: actions/checkout@v7.0.1
 
             - name: Setup Go
-              uses: actions/setup-go@v6.4.0
+              uses: actions/setup-go@v7.0.0
               with:
                   go-version-file: ./go.mod
                   cache: true
 
             - name: Initialize CodeQL
-              uses: github/codeql-action/init@v4
+              uses: github/codeql-action/init@v4.37.3
               with:
                   languages: go
                   build-mode: autobuild
 
             - name: Perform CodeQL Analysis
-              uses: github/codeql-action/analyze@v4
+              uses: github/codeql-action/analyze@v4.37.3
               with:
                   category: '/language:go'
