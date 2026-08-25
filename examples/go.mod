@@ -7,7 +7,7 @@ replace github.com/lewisgibson/go-engine.io => ../
 require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-chi/chi/v5 v5.3.0
-	github.com/labstack/echo/v4 v4.15.2
+	github.com/labstack/echo/v4 v4.15.3
 	github.com/lewisgibson/go-engine.io v0.0.0-00010101000000-000000000000
 	github.com/quic-go/quic-go v0.59.1
 	github.com/quic-go/webtransport-go v0.10.0
